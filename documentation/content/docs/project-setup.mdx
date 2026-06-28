@@ -1,0 +1,46 @@
+---
+title: Project Setup & Architecture
+description: Scaffold the Monorepo and Component Architecture
+---
+
+# Project Setup & Component Architecture
+
+Here is how our initial monorepo setup evolves into the component architecture:
+
+```mermaid
+flowchart LR
+    subgraph Step1 ["Step 1: Scaffold the Monorepo"]
+        direction TD
+        A["nightcode (Bun monorepo)"] --> B["packages/cli (@nightcode/cli)"]
+        
+        B --> C["@opentui"]
+        B --> D["React 19"]
+        
+        C --> E["App() -> &lt;textarea focused /&gt;"]
+        D --> E
+    end
+
+    subgraph Step2 ["Step 2: Component Architecture"]
+        direction TD
+        F["App()"] --> G["Header<br/>ASCII 'Night Code'"]
+        F --> H["InputBar"]
+        
+        H --> I["textarea"]
+        H --> J["StatusBar"]
+        H --> K["`**CommandMenu (opens on '/')**
+
+| /new | /models | /theme |
+| :---: | :---: | :---: |
+| /agents | /sessions | /exit |
+
+Arrow keys + Enter to select`"]
+    end
+
+    Step1 -- "evolves into" --> Step2
+```
+
+To run the application and see the working TUI, run:
+
+```bash
+bun run dev:cli
+```

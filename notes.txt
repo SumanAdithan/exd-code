@@ -1,0 +1,8 @@
+EXD CODE
+    - text stack monorepo with four packages
+        - terminal ui (OpenTui)
+        - backend server (Hono)
+        - Shared types and schemas package
+        - database layer (prisma)
+
+Project Setup & Component Architecture
