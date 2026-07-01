@@ -1,0 +1,163 @@
+---
+title: Scaffold the Monorepo
+description: Scaffold the monorepo and initial setup
+---
+
+# Scaffold the Monorepo
+
+We have initialized a Bun monorepo and created our first package: the CLI terminal UI using OpenTui.
+
+## Package Installation
+
+1. Initialized the workspace in the root `package.json` to include the `packages/*` workspace.
+2. Created the `@exdcode/cli` package by scaffolding the OpenTui React template:
+
+```bash
+cd packages
+bun create tui cli --template react
+```
+
+## Folder Structure
+
+The current workspace structure looks like this:
+
+```text
+exdcode/
+├── .gitignore           # Global git ignore for monorepo
+├── bun.lock
+├── package.json         # Workspace root (bun workspaces)
+├── tsconfig.base.json
+└── packages/
+    └── cli/             # @exdcode/cli
+        ├── package.json
+        ├── tsconfig.json
+        └── src/
+            └── index.tsx # CLI entry point
+```
+
+## Configuration Files
+
+The monorepo configuration relies on a root `package.json` and a base TypeScript configuration.
+
+### Workspace `package.json`
+
+The root `package.json` defines the workspaces and development scripts:
+
+```json title="package.json"
+{
+  "name": "exdcode",
+  "version": "1.0.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:cli": "bun run --watch packages/cli/src/index.tsx"
+  }
+}
+```
+
+### `tsconfig.base.json`
+
+A base TS config is used to standardize compiler options across all packages:
+
+```json title="tsconfig.base.json"
+{
+  "compilerOptions": {
+    // Environment setup & latest features
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "allowJs": true,
+
+    // Bundler mode
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    // Best practices
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    // Some stricter flags (disabled by default)
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noPropertyAccessFromIndexSignature": false
+  }
+}
+```
+
+### CLI Package Configuration
+
+The CLI package uses OpenTui and React:
+
+```json title="packages/cli/package.json"
+{
+  "name": "@exdcode/cli",
+  "module": "src/index.tsx",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --watch src/index.tsx"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.4.2",
+    "@opentui/react": "^0.4.2",
+    "react": "^19.2.6"
+  }
+}
+```
+
+### CLI Package TypeScript Configuration
+
+The CLI package extends the base config and sets up the custom JSX runtime required by OpenTui:
+
+```json title="packages/cli/tsconfig.json"
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react"
+  }
+}
+```
+
+## Initial Code
+
+Here is the initial setup for the OpenTui application in `packages/cli/src/index.tsx`:
+
+```tsx title="packages/cli/src/index.tsx"
+import { createCliRenderer } from "@opentui/core";
+import { createRoot } from "@opentui/react";
+
+function App() {
+  return (
+    <box alignItems="center" justifyContent="center" flexGrow={1}>
+      <box justifyContent="center" alignItems="flex-end">
+        <textarea focused placeholder={"Hello world"} />
+      </box>
+    </box>
+  );
+}
+
+const renderer = await createCliRenderer();
+createRoot(renderer).render(<App />);
+```
+
+## Running the Application
+
+You can now start the terminal UI using the dev script configured in the root workspace:
+
+```bash
+bun run dev:cli
+```

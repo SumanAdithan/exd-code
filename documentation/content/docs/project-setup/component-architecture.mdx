@@ -1,0 +1,563 @@
+---
+title: Component Architecture
+description: Understanding the core TUI components
+---
+
+# Component Architecture
+
+The CLI application is built using a composable React component architecture tailored for the terminal using `@opentui/react`. 
+
+The core layout in `App` combines several key components to create the main interactive terminal interface. Here is the complete breakdown of every file and function used to build the interface.
+
+## App Layout
+
+The `App` component acts as the main wrapper, setting up the background color and the global layout constraints. It ensures that the `InputBar` is horizontally centered but constrained to a maximum width of 90 columns.
+
+```tsx title="packages/cli/src/index.tsx"
+import { createCliRenderer } from "@opentui/core";
+import { createRoot } from "@opentui/react";
+import { Header } from "./components/header";
+import { StatusBar } from "./components/status-bar";
+import { InputBar } from "./components/input-bar";
+
+function App() {
+  return (
+    <box
+      alignItems="center"
+      justifyContent="center"
+      backgroundColor="#0D0D12"
+      width="100%"
+      height="100%"
+      gap={2}
+    >
+      <Header />
+      <box width="100%" maxWidth={90} paddingX={2} flexDirection="column">
+        <InputBar onSubmit={() => {}} />
+      </box>
+    </box>
+  );
+}
+
+const renderer = await createCliRenderer({
+  targetFps: 60,
+  exitOnCtrlC: false,
+});
+createRoot(renderer).render(<App />);
+```
+
+## Core Components
+
+### `Header`
+Located in `components/header.tsx`, this component renders the "Exd Code" branding using a specialized `<ascii-font>` element. It serves as the top-level branding for the CLI application.
+
+```tsx title="packages/cli/src/components/header.tsx"
+export function Header() {
+  return (
+    <box justifyContent="center" alignItems="center">
+      <box
+        flexDirection="row"
+        justifyContent="center"
+        gap={0.5}
+        alignItems="center"
+      >
+        <ascii-font font="tiny" text="Exd" color="gray" />
+        <ascii-font font="tiny" text="Code" />
+      </box>
+    </box>
+  );
+}
+```
+
+### `StatusBar`
+Located in `components/status-bar.tsx` and nested directly inside the `InputBar`, this component renders the small helper text below the text area to give the user immediate contextual hints on the current mode and model.
+
+```tsx title="packages/cli/src/components/status-bar.tsx"
+import { TextAttributes } from "@opentui/core";
+
+export function StatusBar() {
+  return (
+    <box flexDirection="row" gap={1}>
+      <text fg="cyan">Build</text>
+      <text attributes={TextAttributes.DIM} bg="gray">
+        &rsaquo;
+      </text>
+      <text>gemini</text>
+    </box>
+  );
+}
+```
+
+### `Border Elements`
+A `border.tsx` utility file is used to define the custom characters to render UI lines seamlessly around boxes, creating a clean GUI-like appearance in the terminal without defaulting to basic ASCII boundaries.
+
+```tsx title="packages/cli/src/components/border.tsx"
+export const EmptyBorder = {
+  topLeft: "",
+  bottomLeft: "",
+  vertical: "",
+  topRight: "",
+  bottomRight: "",
+  horizontal: " ",
+  bottomT: "",
+  topT: "",
+  cross: "",
+  leftT: "",
+  rightT: "",
+};
+
+export const SplitBorder = {
+  border: ["left" as const, "right" as const],
+  customBorderChars: {
+    ...EmptyBorder,
+    vertical: "┃",
+  },
+};
+```
+
+### `InputBar`
+Located in `components/input-bar.tsx`, the `InputBar` is the primary interactive container. It wraps the `@opentui/react` `<textarea>` element, handles keybindings, captures multi-line user input, and coordinates the display of the `CommandMenu`.
+
+```tsx title="packages/cli/src/components/input-bar.tsx"
+import { useRef, useCallback, useEffect } from "react";
+import type { TextareaRenderable } from "@opentui/core";
+import { useRenderer } from "@opentui/react";
+import type { KeyBinding } from "@opentui/core";
+import { EmptyBorder } from "./border";
+import { StatusBar } from "./status-bar";
+import { CommandMenu } from "./command-menu";
+import type { Command } from "./command-menu/types";
+import { useCommandMenu } from "./command-menu/use-command-menu";
+
+type Props = {
+  onSubmit: (text: string) => void;
+  disabled?: boolean;
+};
+
+export const TEXTAREA_KEY_BINDINGS: KeyBinding[] = [
+  { name: "return", action: "submit" },
+  { name: "enter", action: "submit" },
+  { name: "return", shift: true, action: "newline" },
+  { name: "enter", shift: true, action: "newline" },
+];
+
+export function InputBar({ onSubmit, disabled = false }: Props) {
+  const textareaRef = useRef<TextareaRenderable>(null);
+  const onSubmitRef = useRef<() => void>(() => {});
+  const renderer = useRenderer();
+
+  const {
+    showCommandMenu,
+    commandQuery,
+    selectedIndex,
+    scrollRef,
+    handleContentChange,
+    resolveCommand,
+    setSelectedIndex,
+  } = useCommandMenu();
+
+  const handleCommandExecute = useCallback((index: number) => {
+    const command = resolveCommand(index);
+    handleCommand(command);
+  }, []);
+
+  const handleTextareaContentChange = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    handleContentChange(textarea.plainText);
+  }, []);
+
+  const handleSubmit = useCallback(() => {
+    if (disabled) return;
+
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const text = textarea.plainText.trim();
+    if (text.length === 0) return;
+
+    onSubmit(text);
+    textarea.setText("");
+  }, [disabled, onSubmit]);
+
+  const handleCommand = useCallback(
+    (command: Command | undefined) => {
+      const textarea = textareaRef.current;
+      if (!textarea || !command) return;
+
+      textarea.setText("");
+
+      if (command.action) {
+        command.action({
+          exit: () => renderer.destroy(),
+        });
+      } else {
+        textarea.insertText(command.value + " ");
+      }
+    },
+    [renderer],
+  );
+
+  // Wire up textarea submit handler once so it always reads the latest state.
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.onSubmit = () => {
+      onSubmitRef.current();
+    };
+  }, []);
+
+  onSubmitRef.current = () => {
+    if (disabled) return;
+
+    if (showCommandMenu) {
+      const command = resolveCommand(selectedIndex);
+      handleCommand(command);
+      return;
+    }
+
+    handleSubmit();
+  };
+
+  return (
+    <box width="100%" alignItems="center">
+      <box
+        border={["left"]}
+        borderColor="cyan"
+        customBorderChars={{ ...EmptyBorder, vertical: "|", bottomLeft: "|" }}
+        width="100%"
+      >
+        <box
+          position="relative"
+          justifyContent="center"
+          paddingX={2}
+          paddingY={1}
+          backgroundColor="#1A1A24"
+          width="100%"
+          gap={1}
+        >
+          {showCommandMenu && (
+            <box
+              position="absolute"
+              bottom="100%"
+              left={0}
+              width="100%"
+              backgroundColor="#1A1A24"
+              zIndex={10}
+            >
+              <CommandMenu
+                query={commandQuery}
+                selectedIndex={selectedIndex}
+                scrollRef={scrollRef}
+                onSelect={setSelectedIndex}
+                onExecute={handleCommandExecute}
+              />
+            </box>
+          )}
+          <textarea
+            ref={textareaRef}
+            focused={!disabled}
+            keyBindings={TEXTAREA_KEY_BINDINGS}
+            onContentChange={handleTextareaContentChange}
+            placeholder={`Ask anything... "create a login page for email password authentication"`}
+          />
+          <StatusBar />
+        </box>
+      </box>
+    </box>
+  );
+}
+```
+
+## Command Menu System
+
+The Command Menu system consists of multiple files grouped in the `components/command-menu` directory to manage the data, state, and rendering of the slash command overlay.
+
+### `types.ts`
+Defines the strictly-typed structures for commands and the execution context passed to custom command actions.
+
+```tsx title="packages/cli/src/components/command-menu/types.ts"
+export type CommandContext = {
+  exit: () => void;
+};
+
+export type Command = {
+  name: string;
+  description: string;
+  value: string;
+  action?: (ctx: CommandContext) => void | Promise<void>;
+};
+```
+
+### `commands.tsx`
+Provides the actual data array of commands available in the system.
+
+```tsx title="packages/cli/src/components/command-menu/commands.tsx"
+import type { Command } from "./types";
+
+export const COMMANDS: Command[] = [
+  {
+    name: "new",
+    description: "Start a new conversation",
+    value: "/new",
+  },
+  {
+    name: "agents",
+    description: "Select AI model for generation",
+    value: "/agents",
+  },
+  {
+    name: "models",
+    description: "Select AI model for generation",
+    value: "/models",
+  },
+  {
+    name: "sessions",
+    description: "Browse past sessions",
+    value: "/sessions",
+  },
+  {
+    name: "theme",
+    description: "Change color theme",
+    value: "/theme",
+  },
+  {
+    name: "login",
+    description: "Sign in with your browser",
+    value: "/login",
+  },
+  {
+    name: "logout",
+    description: "Sign out of your account",
+    value: "/logout",
+  },
+  {
+    name: "upgrade",
+    description: "Buy more credits",
+    value: "/upgrade",
+  },
+  {
+    name: "usage",
+    description: "Open billing portal in your browser",
+    value: "/usage",
+  },
+  {
+    name: "exit",
+    description: "Quit the application",
+    value: "/exit",
+    action: (ctx) => {
+      ctx.exit();
+    },
+  },
+];
+```
+
+### `filter-commands.ts`
+Contains a helper utility function `getFilteredCommands` to quickly search the available commands array using the current user's query.
+
+```tsx title="packages/cli/src/components/command-menu/filter-commands.ts"
+import type { Command } from "./types";
+import { COMMANDS } from "./commands";
+
+export function getFilteredCommands(query: string): Command[] {
+  if (query.length === 0) return COMMANDS;
+  return COMMANDS.filter((cmd) =>
+    cmd.name.toLowerCase().startsWith(query.toLowerCase()),
+  );
+}
+```
+
+### `use-command-menu.ts`
+A custom React Hook that orchestrates the complex logic for command menu interactions. It manages state (e.g., text value, selected index), automatically scrolls to keep highlighted items in view, and handles keyboard navigation when the menu is active.
+
+```tsx title="packages/cli/src/components/command-menu/use-command-menu.ts"
+import { useRef, useState, useMemo, type RefObject } from "react";
+import type { ScrollBoxRenderable } from "@opentui/core";
+import { useKeyboard } from "@opentui/react";
+import { getFilteredCommands } from "./filter-commands";
+import type { Command } from "./types";
+
+type UseCommandMenuReturn = {
+  showCommandMenu: boolean;
+  commandQuery: string;
+  selectedIndex: number;
+  scrollRef: RefObject<ScrollBoxRenderable | null>;
+  handleContentChange: (text: string) => void;
+  resolveCommand: (index: number) => Command | undefined;
+  setSelectedIndex: (index: number) => void;
+};
+
+export function useCommandMenu(): UseCommandMenuReturn {
+  const [textValue, setTextValue] = useState("");
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [showCommandMenu, setShowCommandMenu] = useState(false);
+  const scrollRef = useRef<ScrollBoxRenderable>(null);
+
+  const commandQuery =
+    showCommandMenu && textValue.startsWith("/") ? textValue.slice(1) : "";
+
+  const filteredCommands = useMemo(
+    () => getFilteredCommands(commandQuery),
+    [commandQuery],
+  );
+
+  const handleContentChange = (text: string) => {
+    setTextValue(text);
+    setSelectedIndex(0);
+
+    // Jump back to top of the list when the user types a new character
+    const scrollbox = scrollRef.current;
+    if (scrollbox) {
+      scrollbox.scrollTo(0);
+    }
+
+    const prefix = text.startsWith("/") ? text.slice(1) : null;
+    if (prefix !== null && !prefix.includes(" ")) {
+      setShowCommandMenu(true);
+    } else {
+      setShowCommandMenu(false);
+    }
+  };
+
+  // Resolve a command at a specific index (returns the command, caller handles execution)
+  const resolveCommand = (index: number): Command | undefined => {
+    const command = filteredCommands[index];
+    if (command) {
+      setShowCommandMenu(false);
+    }
+
+    return command;
+  };
+
+  // Arrow keys move selection; the list follows along when the highlight goes off-screen
+  useKeyboard((key) => {
+    if (!showCommandMenu) return;
+
+    if (key.name === "escape") {
+      key.preventDefault();
+      setShowCommandMenu(false);
+    } else if (key.name === "up") {
+      key.preventDefault();
+      setSelectedIndex((i: number) => {
+        const newIndex = Math.max(0, i - 1);
+
+        // Keep the highlited item visible when arrowing past the edge
+        const sb = scrollRef.current;
+        if (sb && newIndex < sb.scrollTop) {
+          sb.scrollTo(newIndex);
+        }
+
+        return newIndex;
+      });
+    } else if (key.name === "down") {
+      key.preventDefault();
+      setSelectedIndex((i: number) => {
+        if (filteredCommands.length === 0) {
+          return 0;
+        }
+
+        const newIndex = Math.min(filteredCommands.length - 1, i + 1);
+        const sb = scrollRef.current;
+        if (sb) {
+          const viewportHeight = sb.viewport.height;
+          const visibleEnd = sb.scrollTop + viewportHeight - 1;
+
+          if (newIndex > visibleEnd) {
+            sb.scrollTo(newIndex - viewportHeight + 1);
+          }
+        }
+
+        return newIndex;
+      });
+    }
+  });
+
+  return {
+    showCommandMenu,
+    commandQuery,
+    selectedIndex,
+    scrollRef,
+    handleContentChange,
+    resolveCommand,
+    setSelectedIndex,
+  };
+}
+```
+
+### `index.tsx` (CommandMenu UI)
+This component presents the filtered commands visually in an interactive list. It uses a `<scrollbox>` element to contain lists larger than the terminal size, and dynamically adjusts the width of the command name column so the descriptions align beautifully.
+
+```tsx title="packages/cli/src/components/command-menu/index.tsx"
+import type { RefObject } from "react";
+import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core";
+import { getFilteredCommands } from "./filter-commands";
+import { COMMANDS } from "./commands";
+
+const MAX_VISIBLE_ITEMS = 8;
+
+// Align all command names in a fixed-width column so their descriptions.
+// start at the same horizontal position for a clean tabular look.
+// The width adjusts to accomodate the longest command name.
+const COMMAND_COL_WIDTH =
+  Math.max(...COMMANDS.map((cmd) => cmd.name.length)) + 4;
+
+type CommandMenuProps = {
+  query: string;
+  selectedIndex: number;
+  scrollRef: RefObject<ScrollBoxRenderable | null>;
+  onSelect: (index: number) => void;
+  onExecute: (index: number) => void;
+};
+
+export function CommandMenu({
+  query,
+  selectedIndex,
+  scrollRef,
+  onSelect,
+  onExecute,
+}: CommandMenuProps) {
+  const filtered = getFilteredCommands(query);
+  const visibleHeight = Math.min(filtered.length, MAX_VISIBLE_ITEMS);
+
+  if (filtered.length === 0) {
+    return (
+      <box padding={1}>
+        <text attributes={TextAttributes.DIM}>No matching commands</text>
+      </box>
+    );
+  }
+
+  return (
+    <scrollbox ref={scrollRef} height={visibleHeight}>
+      {filtered.map((cmd, i) => {
+        const isSelected = i === selectedIndex;
+
+        return (
+          <box
+            key={cmd.value}
+            flexDirection="row"
+            paddingX={1}
+            height={1}
+            overflow="hidden"
+            backgroundColor={isSelected ? "#89B4FA" : undefined}
+            onMouseMove={() => onSelect(i)}
+            onMouseDown={() => onExecute(i)}
+          >
+            <box width={COMMAND_COL_WIDTH} flexShrink={0}>
+              <text selectable={false} fg={isSelected ? "black" : "white"}>
+                /{cmd.name}
+              </text>
+            </box>
+            <box flexGrow={1} flexShrink={1} overflow="hidden">
+              <text selectable={false} fg={isSelected ? "black" : "gray"}>
+                {cmd.description}
+              </text>
+            </box>
+          </box>
+        );
+      })}
+    </scrollbox>
+  );
+}
+```

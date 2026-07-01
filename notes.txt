@@ -6,3 +6,5 @@ EXD CODE
         - database layer (prisma)
 
 Project Setup & Component Architecture
+    - Scaffold the Monorepo
+    - component architecture
