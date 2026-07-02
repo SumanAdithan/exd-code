@@ -2,11 +2,12 @@ import { useRef, useCallback, useEffect } from "react";
 import type { TextareaRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
 import type { KeyBinding } from "@opentui/core";
-import { EmptyBorder } from "./border";
 import { StatusBar } from "./status-bar";
 import { CommandMenu } from "./command-menu";
 import type { Command } from "./command-menu/types";
 import { useCommandMenu } from "./command-menu/use-command-menu";
+import { useToast } from "../providers/toast";
+import { SplitBorderChars } from "./border";
 
 type Props = {
   onSubmit: (text: string) => void;
@@ -24,6 +25,7 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
   const textareaRef = useRef<TextareaRenderable>(null);
   const onSubmitRef = useRef<() => void>(() => {});
   const renderer = useRenderer();
+  const toast = useToast();
 
   const {
     showCommandMenu,
@@ -65,12 +67,13 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
       if (command.action) {
         command.action({
           exit: () => renderer.destroy(),
+          toast,
         });
       } else {
         textarea.insertText(command.value + " ");
       }
     },
-    [renderer],
+    [renderer, toast],
   );
 
   const handleCommandExecute = useCallback(
@@ -108,8 +111,8 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
       <box
         border={["left"]}
         borderColor="cyan"
-        customBorderChars={{ ...EmptyBorder, vertical: "|", bottomLeft: "|" }}
         width="100%"
+        customBorderChars={SplitBorderChars}
       >
         <box
           position="relative"

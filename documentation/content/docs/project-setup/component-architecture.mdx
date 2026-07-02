@@ -7,6 +7,26 @@ description: Understanding the core TUI components
 
 The CLI application is built using a composable React component architecture tailored for the terminal using `@opentui/react`. 
 
+## Folder Structure
+
+The components are organized in the `packages/cli/src` directory as follows:
+
+```text
+src/
+├── components/
+│   ├── border.tsx
+│   ├── command-menu/
+│   │   ├── commands.tsx
+│   │   ├── filter-commands.ts
+│   │   ├── index.tsx
+│   │   ├── types.ts
+│   │   └── use-command-menu.ts
+│   ├── header.tsx
+│   ├── input-bar.tsx
+│   └── status-bar.tsx
+└── index.tsx
+```
+
 The core layout in `App` combines several key components to create the main interactive terminal interface. Here is the complete breakdown of every file and function used to build the interface.
 
 ## App Layout
@@ -105,12 +125,9 @@ export const EmptyBorder = {
   rightT: "",
 };
 
-export const SplitBorder = {
-  border: ["left" as const, "right" as const],
-  customBorderChars: {
-    ...EmptyBorder,
-    vertical: "┃",
-  },
+export const SplitBorderChars = {
+  ...EmptyBorder,
+  vertical: "┃",
 };
 ```
 
@@ -122,11 +139,12 @@ import { useRef, useCallback, useEffect } from "react";
 import type { TextareaRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
 import type { KeyBinding } from "@opentui/core";
-import { EmptyBorder } from "./border";
 import { StatusBar } from "./status-bar";
 import { CommandMenu } from "./command-menu";
 import type { Command } from "./command-menu/types";
 import { useCommandMenu } from "./command-menu/use-command-menu";
+import { useToast } from "../providers/toast";
+import { SplitBorderChars } from "./border";
 
 type Props = {
   onSubmit: (text: string) => void;
@@ -144,6 +162,7 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
   const textareaRef = useRef<TextareaRenderable>(null);
   const onSubmitRef = useRef<() => void>(() => {});
   const renderer = useRenderer();
+  const toast = useToast();
 
   const {
     showCommandMenu,
@@ -185,12 +204,13 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
       if (command.action) {
         command.action({
           exit: () => renderer.destroy(),
+          toast,
         });
       } else {
         textarea.insertText(command.value + " ");
       }
     },
-    [renderer],
+    [renderer, toast],
   );
 
   const handleCommandExecute = useCallback(
@@ -228,8 +248,8 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
       <box
         border={["left"]}
         borderColor="cyan"
-        customBorderChars={{ ...EmptyBorder, vertical: "|", bottomLeft: "|" }}
         width="100%"
+        customBorderChars={SplitBorderChars}
       >
         <box
           position="relative"
