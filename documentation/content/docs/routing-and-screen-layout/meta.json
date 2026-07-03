@@ -1,3 +1,7 @@
 {
-  "pages": ["index", "routing-and-screens"]
+  "pages": [
+    "index",
+    "routing-and-screens",
+    "session-screen-ui"
+  ]
 }
