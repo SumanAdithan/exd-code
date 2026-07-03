@@ -3,13 +3,19 @@ import { createRoot } from "@opentui/react";
 import { Header } from "./components/header";
 import { StatusBar } from "./components/status-bar";
 import { InputBar } from "./components/input-bar";
+import { ToastProvider } from "./providers/toast";
+import { KeyboardLayerProvider } from "./providers/keyboard-layer";
+import { DialogProvider } from "./providers/dialog";
+import { ThemeProvider, useTheme } from "./providers/theme";
 
-function App() {
+function ThemedRoot() {
+  const { colors } = useTheme();
+
   return (
     <box
       alignItems="center"
       justifyContent="center"
-      backgroundColor="#0D0D12"
+      backgroundColor={colors.background}
       width="100%"
       height="100%"
       gap={2}
@@ -19,6 +25,20 @@ function App() {
         <InputBar onSubmit={() => {}} />
       </box>
     </box>
+  );
+}
+
+function App() {
+  return (
+    <ThemeProvider>
+      <KeyboardLayerProvider>
+        <DialogProvider>
+          <ToastProvider>
+            <ThemedRoot />
+          </ToastProvider>
+        </DialogProvider>
+      </KeyboardLayerProvider>
+    </ThemeProvider>
   );
 }
 

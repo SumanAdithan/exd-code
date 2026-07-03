@@ -8,3 +8,8 @@ EXD CODE
 Project Setup & Component Architecture
     - Scaffold the Monorepo
     - component architecture
+
+UI Infrastructure
+    - Toast Notifications
+    - Dialog and Keyboard layers
+    - Theme System
