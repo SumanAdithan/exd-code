@@ -1,0 +1,215 @@
+---
+title: Server Package
+description: Hono REST API architecture and setup
+---
+
+The `@exdcode/server` package encapsulates our backend application. We leverage **Hono**, an ultra-fast web framework, running natively on **Bun** for maximum performance. This package serves as the primary REST API, communicating directly with the CLI frontend and the Prisma database layer.
+
+## Installation
+
+The server package requires Hono and the Zod validator for type-safe endpoint parsing. It also links directly to our internal `@exdcode/shared` package workspace:
+
+```bash
+bun add hono @hono/zod-validator zod --filter @exdcode/server
+```
+
+## Folder Structure
+
+The basic server scaffolding establishes a minimal footprint:
+
+```text
+packages/server/
+├── package.json
+├── tsconfig.json
+└── src/
+    └── index.ts
+```
+
+## Configuration
+
+### `package.json`
+The server is configured as a module. We include a `dev` script that utilizes Bun's native `--hot` flag for instant hot-reloading during development.
+
+```json title="packages/server/package.json"
+{
+  "name": "@exdcode/server",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run --hot src/index.ts"
+  },
+  "dependencies": {
+    "@exdcode/shared": "workspace:*",
+    "@hono/zod-validator": "^0.8.0",
+    "hono": "^4.12.27",
+    "zod": "^4.4.3"
+  }
+}
+```
+
+## Implementation
+
+### 1. Entry Point & Global Error Handler (`index.ts`)
+The entry point initializes the Hono application instance and registers a global error handler. By hooking into `app.onError`, we ensure that any `HTTPException` is cleanly formatted as JSON, preventing raw stack traces from bleeding to the frontend. It also mounts our API routes.
+
+```typescript title="packages/server/src/index.ts"
+import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
+import sessions from "./routes/sessions";
+
+const app = new Hono();
+
+app.onError((error, c) => {
+  if (error instanceof HTTPException) {
+    return c.json(
+      {
+        error: error.message || "Request failed",
+      },
+      error.status,
+    );
+  }
+
+  console.log("Unhandled server error", error);
+  return c.json({ error: "Internal server error" }, 500);
+});
+
+const routes = app.route("/sessions", sessions);
+
+export type AppType = typeof routes;
+
+// idleTimeout must be high, otherwise LLM tool calls might not complete
+export default { port: 5000, fetch: app.fetch, idleTimeout: 255 };
+```
+
+### 2. Session Routes (`routes/sessions.ts`)
+The `/sessions` route manages the core interactions of the CLI. It uses `@hono/zod-validator` and `zod` to strictly validate incoming payloads, ensuring that data like the requested LLM model actually exists by cross-referencing our `@exdcode/shared` package. 
+
+Currently, this is scaffolded with mock data for rapid UI prototyping.
+
+```typescript title="packages/server/src/routes/sessions.ts"
+import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
+import { zValidator } from "@hono/zod-validator";
+import { z } from "zod";
+import { findSupportedChatModel } from "@exdcode/shared";
+
+type MockMessage = {
+  id: string;
+  role: string;
+  content: string;
+  mode: string;
+  model: string;
+  status: string;
+  parts: null;
+  duration: null;
+  createdAt: string;
+  sessionId: string;
+};
+
+type MockSession = {
+  id: string;
+  title: string;
+  cwd: string | null;
+  userId: string;
+  createdAt: string;
+  messages: MockMessage[];
+};
+
+const sessions: MockSession[] = [];
+let nextId = 1;
+
+const createSessionSchema = z.object({
+  title: z.string(),
+  cwd: z.string().optional(),
+  initialMessage: z
+    .object({
+      role: z.string(),
+      content: z.string(),
+      mode: z.string(),
+      model: z
+        .string()
+        .refine((id) => !!findSupportedChatModel(id), "Unsupported model"),
+    })
+    .optional(),
+});
+
+const createSessionValidator = zValidator(
+  "json",
+  createSessionSchema,
+  (result, c) => {
+    if (!result.success) return c.json({ error: "Invalid request body" }, 400);
+  },
+);
+
+const app = new Hono()
+  .get("/", (c) => {
+    const result = sessions.map(({ id, title, createdAt }) => ({
+      id,
+      title,
+      createdAt,
+    }));
+
+    return c.json(result);
+  })
+  .get("/:id", async (c) => {
+    // MOCK: Uncomment to simulate slow session loading
+    // await new Promise((r)=> setTimeout(r,5000))
+    //
+    // MOCK: Uncomment to simulate session loading error
+    // throw new HTTPException(500, {message: "Mock error: session loading failed"})
+
+    const id = c.req.param("id");
+    const session = sessions.find((s) => s.id === id);
+
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    return c.json(session);
+  })
+  .post("/", createSessionValidator, async (c) => {
+    // MOCK: Uncomment to simulate slow session loading
+    // await new Promise((r)=> setTimeout(r,5000))
+    //
+    // MOCK: Uncomment to simulate session loading error
+    // throw new HTTPException(500, {message: "Mock error: session loading failed"})
+
+    const { initialMessage, ...data } = c.req.valid("json");
+
+    const id = String(nextId++);
+    const now = new Date().toISOString();
+
+    const messages: MockMessage[] = [];
+    if (initialMessage) {
+      messages.push({
+        id: String(nextId++),
+        role: initialMessage.role,
+        content: initialMessage.content,
+        mode: initialMessage.mode,
+        model: initialMessage.model,
+        status: "COMPLETE",
+        parts: null,
+        duration: null,
+        createdAt: now,
+        sessionId: id,
+      });
+    }
+
+    const session: MockSession = {
+      id,
+      title: data.title,
+      cwd: data.cwd ?? null,
+      userId: "mock-user",
+      createdAt: now,
+      messages,
+    };
+
+    sessions.push(session);
+    return c.json(session, 201);
+  });
+
+export default app;
+```

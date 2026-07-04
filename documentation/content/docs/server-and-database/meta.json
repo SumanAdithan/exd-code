@@ -1,3 +1,7 @@
 {
-  "pages": ["index", "shared-package"]
+  "pages": [
+    "index",
+    "shared-package",
+    "server-package"
+  ]
 }

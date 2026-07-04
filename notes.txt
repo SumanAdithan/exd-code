@@ -20,3 +20,6 @@ Routing & Screen Layout
 
 Server, Shared Package & Database
     - shared package and types & schema
+    - shared Package
+    - setup server package
+    - adding session route
