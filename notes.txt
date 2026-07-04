@@ -17,3 +17,6 @@ UI Infrastructure
 Routing & Screen Layout
     - Routing & Screens
     - Session Screen UI
+
+Server, Shared Package & Database
+    - shared package and types & schema
