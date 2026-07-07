@@ -1,0 +1,14 @@
+model Message{
+    id String @id @default(cuid())
+    sessionId String
+    role Role
+    status MessageStatus
+    model String
+    content String
+    parts Json?
+    mode Mode
+    duration Int?
+    createdAt DateTime @default(now())
+    session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+    @@index([sessionId])
+}

@@ -23,3 +23,5 @@ Server, Shared Package & Database
     - shared Package
     - setup server package
     - adding session route
+    - integrate api to cli
+    - adding database

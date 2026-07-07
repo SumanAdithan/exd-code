@@ -27,3 +27,82 @@ flowchart LR
     style DB fill:#FFE082,stroke:#FF8F00,color:#000
 ```
 </div>
+
+<div align="center">
+```mermaid
+flowchart TD
+    subgraph SAC["Server & API Client"]
+        direction TB
+        
+        HS["Hono server :3000"]
+        
+        subgraph SR["Session Routes"]
+            direction TB
+            G1["GET /sessions"]
+            G2["GET /sessions/:id"]
+            P["POST /sessions + Zod validation"]
+        end
+        
+        HS --> SR
+        
+        CLI["CLI api client (hc&lt;AppType&gt;)"]
+        
+        SR --- CLI
+        
+        E2E["End-to-end type safety via Hono RPC"]
+        CLI ~~~ E2E
+    end
+    
+    style SAC fill:#F3E8FF,stroke:#D8B4E2,color:#4B0082,stroke-width:2px
+    style HS fill:#D8B4FE,stroke:#9333EA,color:#4B0082,stroke-width:2px
+    style SR fill:#FEF3C7,stroke:#D97706,color:#000,stroke-width:2px
+    style G1 fill:#86EFAC,stroke:#16A34A,color:#000,stroke-width:2px
+    style G2 fill:#86EFAC,stroke:#16A34A,color:#000,stroke-width:2px
+    style P fill:#93C5FD,stroke:#2563EB,color:#000,stroke-width:2px
+    style CLI fill:#A5F3FC,stroke:#0891B2,color:#000,stroke-width:2px
+    style E2E fill:none,stroke:none,color:#4B0082
+```
+</div>
+
+<br />
+
+<div align="center">
+```mermaid
+flowchart TD
+    subgraph DB["Database (Prisma & Neon)"]
+        direction TB
+        
+        P["Prisma + pg adapter"]
+        PG["Postgres"]
+        
+        P --> PG
+        
+        subgraph Schema["Schema"]
+            direction TB
+            
+            S["Session"]
+            M["Message"]
+            S --> M
+            
+            R["Role"]
+            Mo["Mode"]
+            MS["MessageStatus"]
+            
+            S ~~~ R
+            M ~~~ MS
+        end
+        
+        P --> Schema
+    end
+    
+    style DB fill:#ECFCCB,stroke:#84CC16,color:#15803D,stroke-width:2px
+    style P fill:#86EFAC,stroke:#22C55E,color:#14532D,stroke-width:2px
+    style PG fill:#FDE68A,stroke:#F59E0B,color:#B45309,stroke-width:2px
+    style Schema fill:#FEF3C7,stroke:#F59E0B,color:#000,stroke-width:2px
+    style S fill:#C4B5FD,stroke:#8B5CF6,color:#4C1D95,stroke-width:2px
+    style M fill:#93C5FD,stroke:#3B82F6,color:#1E3A8A,stroke-width:2px
+    style R fill:#FCA5A5,stroke:#EF4444,color:#7F1D1D,stroke-width:2px
+    style Mo fill:#FCA5A5,stroke:#EF4444,color:#7F1D1D,stroke-width:2px
+    style MS fill:#FCA5A5,stroke:#EF4444,color:#7F1D1D,stroke-width:2px
+```
+</div>

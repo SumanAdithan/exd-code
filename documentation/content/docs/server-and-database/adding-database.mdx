@@ -1,0 +1,314 @@
+---
+title: Database Integration
+description: Integrating Prisma ORM with Postgres
+---
+
+The `@exdcode/database` package handles all data persistence for the application using Prisma ORM with a Postgres adapter. It utilizes Prisma's multi-file schema architecture to keep models and enums cleanly separated.
+
+## Folder Structure
+
+The database package is organized to separate the Prisma schema generation from the runtime Node.js client:
+
+```text
+packages/database/
+├── prisma/
+│   ├── models/
+│   │   ├── enums.prisma
+│   │   ├── message.prisma
+│   │   └── session.prisma
+│   ├── prisma.config.ts
+│   └── schema.prisma
+├── src/
+│   ├── client.ts
+│   ├── enums.ts
+│   └── index.ts
+└── package.json
+```
+
+## Prisma Configuration
+
+### `package.json`
+The database workspace is configured to generate the Prisma client into a local `generated/` directory, leveraging the new `@prisma/adapter-pg` for optimal Postgres performance.
+
+```json title="packages/database/package.json"
+{
+  "name": "@exdcode/database",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./enums": "./src/enums.ts"
+  },
+  "scripts": {
+    "db:generate": "bunx prisma generate"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "dotenv": "^17.4.2",
+    "prisma": "^7.8.0"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0"
+  }
+}
+```
+
+### Base Schema (`schema.prisma`)
+The base schema configures the generator and Postgres datasource.
+
+```prisma title="packages/database/prisma/schema.prisma"
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+```
+
+## Data Models
+
+By leveraging Prisma's native multi-file support, the application's domain models are modularized into a `models/` directory.
+
+### Enums
+```prisma title="packages/database/prisma/models/enums.prisma"
+enum Role{
+    USER
+    ASSISTANT
+    ERROR
+}
+
+enum Mode{
+    BUILD
+    PLAN
+}
+
+enum MessageStatus{
+    COMPLETE
+    INTRUPTED
+}
+```
+
+### Session Model
+```prisma title="packages/database/prisma/models/session.prisma"
+model Session{
+    id String @id @default(cuid())
+    userId String
+    title String
+    cwd String?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+    messages Message[]
+    
+    @@index([userId])
+}
+```
+
+### Message Model
+```prisma title="packages/database/prisma/models/message.prisma"
+model Message{
+    id String @id @default(cuid())
+    sessionId String
+    role Role
+    status MessageStatus
+    model String
+    content String
+    parts Json?
+    mode Mode
+    duration Int?
+    createdAt DateTime @default(now())
+    session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+    @@index([sessionId])
+}
+```
+
+## Database Client
+
+The runtime database client connects via the Postgres adapter and is cleanly exported for the rest of the monorepo.
+
+### `client.ts`
+```typescript title="packages/database/src/client.ts"
+import "dotenv/config";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaClient } from "../generated/prisma/client";
+
+const databaseUrl = process.env.DATABASE_URL;
+
+if (!databaseUrl) {
+  throw new Error("DATABASE_URL is not set");
+}
+
+const adapter = new PrismaPg({ connectionString: databaseUrl });
+
+export const db = new PrismaClient({ adapter });
+```
+
+### `enums.ts`
+```typescript title="packages/database/src/enums.ts"
+export { Role, Mode, MessageStatus } from "../generated/prisma/enums";
+```
+
+## Integration & Changes
+
+With the database package finalized, the backend server routes have been updated to completely replace the previous in-memory mock data array with live Prisma database transactions.
+
+### `sessions.ts`
+The mock types have been removed, and the route handlers now interact directly with `db.session`.
+
+```diff title="packages/server/src/routes/sessions.ts"
+ import { Hono } from "hono";
+-import { HTTPException } from "hono/http-exception";
+ import { zValidator } from "@hono/zod-validator";
+ import { z } from "zod";
+ import { findSupportedChatModel } from "@exdcode/shared";
+-
+-type MockMessage = {
+-  id: string;
+-  role: string;
+-  content: string;
+-  mode: string;
+-  model: string;
+-  status: string;
+-  parts: null;
+-  duration: null;
+-  createdAt: string;
+-  sessionId: string;
+-};
+-
+-type MockSession = {
+-  id: string;
+-  title: string;
+-  cwd: string | null;
+-  userId: string;
+-  createdAt: string;
+-  messages: MockMessage[];
+-};
+-
+-const sessions: MockSession[] = [];
+-let nextId = 1;
++import { db } from "@exdcode/database";
++import { Role, Mode, MessageStatus } from "@exdcode/database/enums";
+ 
+ const createSessionSchema = z.object({
+   title: z.string(),
+   cwd: z.string().optional(),
+   initialMessage: z
+     .object({
+-      role: z.string(),
++      role: z.enum(Role),
+       content: z.string(),
+-      mode: z.string(),
++      mode: z.enum(Mode),
+       model: z
+         .string()
+         .refine((id) => !!findSupportedChatModel(id), "Unsupported model"),
+@@ -53,14 +29,17 @@
+ 
+ const app = new Hono()
+-  .get("/", (c) => {
+-    const result = sessions.map(({ id, title, createdAt }) => ({
+-      id,
+-      title,
+-      createdAt,
+-    }));
+-
+-    return c.json(result);
++  .get("/", async (c) => {
++    const sessions = await db.session.findMany({
++      orderBy: { createdAt: "desc" },
++      select: {
++        id: true,
++        title: true,
++        createdAt: true,
++      },
++    });
++
++    return c.json(sessions);
+   })
+   .get("/:id", async (c) => {
+-    const session = sessions.find((s) => s.id === id);
++    const id = c.req.param("id");
++    const session = await db.session.findUnique({
++      where: { id },
++      include: {
++        messages: { orderBy: { createdAt: "asc" } },
++      },
++    });
+ 
+     if (!session) {
+       return c.json({ error: "Session not found" }, 404);
+     }
+ 
+-    return c.json(session);
++    return c.json(session);
+   })
+   .post("/", createSessionValidator, async (c) => {
+-    const { initialMessage, ...data } = c.req.valid("json");
+-
+-    const id = String(nextId++);
+-    const now = new Date().toISOString();
+-
+-    const messages: MockMessage[] = [];
+-    if (initialMessage) {
+-      messages.push({
+-        id: String(nextId++),
+-        role: initialMessage.role,
+-        content: initialMessage.content,
+-        mode: initialMessage.mode,
+-        model: initialMessage.model,
+-        status: "COMPLETE",
+-        parts: null,
+-        duration: null,
+-        createdAt: now,
+-        sessionId: id,
+-      });
+-    }
+-
+-    const session: MockSession = {
+-      id,
+-      title: data.title,
+-      cwd: data.cwd ?? null,
+-      userId: "mock-user",
+-      createdAt: now,
+-      messages,
+-    };
+-
+-    sessions.push(session);
++    const { initialMessage, ...data } = c.req.valid("json");
++    const session = await db.session.create({
++      data: {
++        ...data,
++        userId: "mock-user",
++        ...(initialMessage && {
++          messages: {
++            create: {
++              ...initialMessage,
++              status: MessageStatus.COMPLETE,
++            },
++          },
++        }),
++      },
++      include: { messages: true },
++    });
+     return c.json(session, 201);
+   });
+```
+
+### `new-session.tsx`
+The CLI was updated to interact with the new database-backed server API.
+
+```diff title="packages/cli/src/screens/new-session.tsx"
+```
+
+### `session.tsx`
+The session loading screen now correctly polls and fetches from the Postgres-backed API.
+
+```diff title="packages/cli/src/screens/session.tsx"
+```
