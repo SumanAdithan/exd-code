@@ -1,0 +1,15 @@
+enum Role{
+    USER
+    ASSISTANT
+    ERROR
+}
+
+enum Mode{
+    BUILD
+    PLAN
+}
+
+enum MessageStatus{
+    COMPLETE
+    INTRUPTED
+}

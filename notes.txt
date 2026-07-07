@@ -17,3 +17,11 @@ UI Infrastructure
 Routing & Screen Layout
     - Routing & Screens
     - Session Screen UI
+
+Server, Shared Package & Database
+    - shared package and types & schema
+    - shared Package
+    - setup server package
+    - adding session route
+    - integrate api to cli
+    - adding database

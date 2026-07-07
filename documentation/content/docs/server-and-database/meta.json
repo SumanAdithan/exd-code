@@ -1,0 +1,9 @@
+{
+  "pages": [
+    "index",
+    "shared-package",
+    "server-package",
+    "api-integration",
+    "adding-database"
+  ]
+}
