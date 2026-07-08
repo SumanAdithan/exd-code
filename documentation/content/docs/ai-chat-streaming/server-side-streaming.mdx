@@ -1,0 +1,336 @@
+---
+title: Server Side Streaming
+description: Implementation of real-time AI streaming using Server-Sent Events
+---
+
+The backend chat route (`POST /:sessionId`) was built to handle real-time streaming, database persistence, and stream interruption securely.
+
+#### 1. Dependencies Installed
+To support the streaming functionality and multiple AI providers, the official Vercel AI SDK packages were added to the server.
+
+```bash title="packages/server"
+bun add ai @ai-sdk/google @ai-sdk/openai @ai-sdk/anthropic
+```
+
+#### 2. Stream Event Schemas
+To ensure type safety across the monorepo, we defined a strict `ChatStreamEvent` schema in the shared package. This prevents malformed data from crashing the CLI client.
+
+```ts title="packages/shared/src/schemas.ts"
+import { z } from "zod";
+
+export const chatStreamEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text-delta"), text: z.string() }),
+  z.object({ type: z.literal("reasoning-delta"), text: z.string() }),
+  z.object({ type: z.literal("tool-call"), toolCallId: z.string(), toolName: z.string(), args: toolCallArgsSchema }),
+  z.object({ type: z.literal("tool-result"), toolCallId: z.string(), result: z.string() }),
+  z.object({ type: z.literal("done"), messageId: z.string(), durationMs: z.number() }),
+  z.object({ type: z.literal("error"), message: z.string() }),
+]);
+
+export type ChatStreamEvent = z.infer<typeof chatStreamEventSchema>;
+```
+
+#### 3. Vercel AI SDK Integration (`models.ts`)
+To power the streaming logic, we integrated `@ai-sdk/google`, `@ai-sdk/openai`, and `@ai-sdk/anthropic`. A centralized `models.ts` utility resolves the requested model ID into a standard Vercel `LanguageModel` adapter.
+
+```ts title="packages/server/src/lib/models.ts"
+import { google } from "@ai-sdk/google";
+import { openai } from "@ai-sdk/openai";
+import { anthropic } from "@ai-sdk/anthropic";
+import { type SupportedChatModel } from "@exdcode/shared";
+import type { LanguageModel } from "ai";
+
+export type ResolvedModel = {
+  model: LanguageModel;
+  provider: string;
+  modelId: string;
+};
+
+function resolveSupportedChatModel(model: SupportedChatModel): ResolvedModel {
+  switch (model.provider) {
+    case "google": return { model: google(model.id), provider: "google", modelId: model.id };
+    case "openai": return { model: openai(model.id), provider: "openai", modelId: model.id };
+    case "anthropic": return { model: anthropic(model.id), provider: "anthropic", modelId: model.id };
+  }
+}
+
+export function resolveChatModel(modelId: string): ResolvedModel {
+  const model = findSupportedChatModel(modelId);
+  if (!model) throw new Error(`Unsupported model: ${modelId}`);
+  return resolveSupportedChatModel(model);
+}
+```
+
+#### 4. Chat Route (`chat.ts`)
+The chat route validates requests, looks up the session history, and streams the AI response back to the client using Server-Sent Events (SSE). It persists the user's message immediately and handles connection aborts to halt AI processing.
+
+```ts title="packages/server/src/routes/chat.ts"
+import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
+import { zValidator } from "@hono/zod-validator";
+import { z } from "zod";
+import { streamText as aiStreamText } from "ai";
+import { db } from "@exdcode/database/client";
+import { Mode, MessageStatus } from "@exdcode/database/enums";
+import { type ChatStreamEvent } from "@exdcode/shared";
+import { isSupportedChatModel, resolveChatModel } from "../lib/models";
+
+const submitSchema = z.object({
+  content: z.string(),
+  mode: z.enum(Mode),
+  model: z.string().refine(isSupportedChatModel, "Unsupported model"),
+});
+
+const submitValidator = zValidator("json", submitSchema, (result, c) => {
+  if (!result.success) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+});
+
+// Strip error messages and empty assistant messages from the conversation
+function buildConversationHistory(
+  messages: {
+    role: "USER" | "ASSISTANT" | "ERROR";
+    content: string;
+    status: MessageStatus;
+  }[],
+) {
+  return messages.flatMap((m) => {
+    if (m.role === "ERROR") return [];
+    if (m.role === "ASSISTANT" && m.content.length === 0) return [];
+
+    return [
+      {
+        role: m.role === "USER" ? ("user" as const) : ("assistant" as const),
+        content: m.content,
+      },
+    ];
+  });
+}
+
+type StreamParams = {
+  sessionId: string;
+  model: string;
+  history: { role: "user" | "assistant"; content: string }[];
+  mode: Mode;
+  abortController: AbortController;
+};
+
+async function streamAiResponse(
+  stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
+  params: StreamParams,
+) {
+  const { sessionId, model, history, mode, abortController } = params;
+  const startTime = Date.now();
+  const resolvedModel = resolveChatModel(model);
+  let fullText = "";
+
+  try {
+    const result = aiStreamText({
+      model: resolvedModel.model,
+      messages: history,
+      abortSignal: abortController.signal,
+    });
+
+    for await (const part of result.stream) {
+      if (stream.aborted) break;
+
+      if (part.type === "text-delta") {
+        fullText += part.text;
+        const event: ChatStreamEvent = { type: "text-delta", text: part.text };
+        await stream.writeSSE({
+          event: "text-delta",
+          data: JSON.stringify(event),
+        });
+      }
+
+      if (part.type === "error") {
+        throw part.error;
+      }
+    }
+
+    if (stream.aborted || abortController.signal.aborted) {
+      return;
+    }
+
+    const elapsedMs = Date.now() - startTime;
+
+    const assistantMessage = await db.message.create({
+      data: {
+        sessionId,
+        role: "ASSISTANT",
+        status: MessageStatus.COMPLETE,
+        model,
+        content: fullText,
+        mode,
+        duration: Math.round(elapsedMs / 1000),
+      },
+    });
+
+    const doneEvent: ChatStreamEvent = {
+      type: "done",
+      messageId: assistantMessage.id,
+      durationMs: elapsedMs,
+    };
+
+    await stream.writeSSE({ event: "done", data: JSON.stringify(doneEvent) });
+  } catch (err) {
+    if (abortController.signal.aborted) {
+      return;
+    }
+
+    const message = err instanceof Error ? err.message : String(err);
+
+    await db.message.create({
+      data: {
+        sessionId,
+        role: "ERROR",
+        status: MessageStatus.COMPLETE,
+        model,
+        content: message,
+        mode,
+      },
+    });
+
+    const errorEvent: ChatStreamEvent = { type: "error", message };
+    await stream.writeSSE({ event: "error", data: JSON.stringify(errorEvent) });
+  }
+}
+
+const app = new Hono()
+  .post("/:sessionId/resume", async (c) => {
+    const sessionId = c.req.param("sessionId");
+
+    const session = await db.session.findUnique({
+      where: { id: sessionId },
+      include: { messages: { orderBy: { createdAt: "asc" } } },
+    });
+
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const lastMessage = session.messages[session.messages.length - 1];
+    if (!lastMessage || lastMessage.role !== "USER") {
+      return c.json(
+        { error: "Session has no pending user message to resume" },
+        409,
+      );
+    }
+
+    if (!isSupportedChatModel(lastMessage.model)) {
+      return c.json(
+        {
+          error: `Session uses unsupported model: ${lastMessage.model}`,
+        },
+        409,
+      );
+    }
+
+    const history = buildConversationHistory(session.messages);
+    const abortController = new AbortController();
+
+    return streamSSE(
+      c,
+      async (stream) => {
+        stream.onAbort(() => {
+          abortController.abort();
+        });
+
+        await streamAiResponse(stream, {
+          sessionId,
+          model: lastMessage.model,
+          history,
+          mode: lastMessage.mode,
+          abortController,
+        });
+      },
+      async (err, stream) => {
+        const message = err instanceof Error ? err.message : String(err);
+        const errorEvent: ChatStreamEvent = { type: "error", message };
+        await stream.writeSSE({
+          event: "error",
+          data: JSON.stringify(errorEvent),
+        });
+      },
+    );
+  })
+  .post("/:sessionId", submitValidator, async (c) => {
+    const sessionId = c.req.param("sessionId");
+
+    const session = await db.session.findUnique({
+      where: { id: sessionId },
+      include: { messages: { orderBy: { createdAt: "asc" } } },
+    });
+
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const data = c.req.valid("json");
+
+    await db.message.create({
+      data: {
+        sessionId,
+        role: "USER",
+        status: MessageStatus.COMPLETE,
+        model: data.model,
+        content: data.content,
+        mode: data.mode,
+      },
+    });
+
+    const history = buildConversationHistory([
+      ...session.messages, // TODO: limit to last 10, 5 messages
+      {
+        role: "USER" as const,
+        content: data.content,
+        status: MessageStatus.COMPLETE,
+      },
+    ]);
+
+    const abortController = new AbortController();
+
+    return streamSSE(
+      c,
+      async (stream) => {
+        stream.onAbort(() => {
+          abortController.abort();
+        });
+
+        await streamAiResponse(stream, {
+          sessionId,
+          model: data.model,
+          history,
+          mode: data.mode,
+          abortController,
+        });
+      },
+      async (err, stream) => {
+        const message = err instanceof Error ? err.message : String(err);
+        const errorEvent: ChatStreamEvent = { type: "error", message };
+        await stream.writeSSE({
+          event: "error",
+          data: JSON.stringify(errorEvent),
+        });
+      },
+    );
+  });
+
+export default app;
+```
+
+#### 5. Integration & Changes
+The new streaming route was mounted on the root Hono app, ready to be consumed by the CLI.
+
+```diff title="packages/server/src/index.ts"
+ import sessions from "./routes/sessions";
++import chat from "./routes/chat";
+ 
+ const app = new Hono();
+ 
+ // ... middleware and error handling ...
+ 
+-const routes = app.route("/sessions", sessions);
++const routes = app.route("/sessions", sessions).route("/chat", chat);
+```

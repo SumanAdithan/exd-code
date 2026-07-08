@@ -1,0 +1,54 @@
+---
+title: Code Integration
+description: Integrating Sentry with Bun and Hono
+---
+
+We've successfully integrated `@sentry/bun` and `@sentry/hono` into our backend!
+
+### 1. Setup the Sentry Middleware
+
+Sentry is initialized as the very first middleware in our Hono server (`packages/server/src/index.ts`) so that it can monitor every request and catch any unhandled errors automatically:
+
+```typescript
+import { sentry } from "@sentry/hono/bun";
+import * as Sentry from "@sentry/hono/bun";
+
+const app = new Hono();
+
+app.use(
+  sentry(app, {
+    dsn: "YOUR_SENTRY_DSN",
+    tracesSampleRate: 1.0,
+    enableLogs: true,
+  })
+);
+```
+
+### 2. Implement the Three Logging Levels
+
+We inject manual `Sentry.logger` calls to capture rich context across our routes (e.g. `sessions.ts`) and global error handler:
+
+- **`Sentry.logger.info` (What happened?)**: Track normal operations and session metrics.
+  ```typescript
+  Sentry.logger.info("Loaded session", {
+    sessionId: id,
+    messageCount: session.messages.length,
+  });
+  ```
+
+- **`Sentry.logger.warn` (Expected problem?)**: Track validation failures or 404s without triggering an incident.
+  ```typescript
+  Sentry.logger.warn("Session not found", {
+    sessionId: id,
+    userId: "mock-user",
+  });
+  ```
+
+- **`Sentry.logger.error` (Something broke?)**: Track 500s directly in the global `app.onError` handler.
+  ```typescript
+  Sentry.logger.error("Unhandled sever error", {
+    path: c.req.path,
+    method: c.req.method,
+    message: error.message,
+  });
+  ```
