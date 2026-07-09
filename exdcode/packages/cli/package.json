@@ -8,6 +8,7 @@
   },
   "devDependencies": {
     "@exdcode/server": "workspace:*",
+    "@exdcode/database": "workspace:*",
     "@types/bun": "latest",
     "@types/react": "^19.2.17"
   },

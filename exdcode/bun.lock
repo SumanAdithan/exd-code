@@ -23,6 +23,7 @@
         "zod": "^4.4.3",
       },
       "devDependencies": {
+        "@exdcode/database": "workspace:*",
         "@exdcode/server": "workspace:*",
         "@types/bun": "latest",
         "@types/react": "^19.2.17",

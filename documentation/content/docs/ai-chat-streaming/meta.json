@@ -1,6 +1,7 @@
 {
   "pages": [
     "index",
-    "server-side-streaming"
+    "server-side-streaming",
+    "use-chat-hook"
   ]
 }

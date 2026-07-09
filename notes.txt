@@ -32,3 +32,4 @@ Sentry Monitoring
 Ai chat streaming
     - Ai Chat streaming
     - server side streaming
+    - use chat hook
