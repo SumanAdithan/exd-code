@@ -47,6 +47,7 @@ app.onError((error, c) => {
     method: c.req.method,
     message: error instanceof Error ? error.message : "Unknown error",
   });
+
   return c.json({ error: "Internal server error" }, 500);
 });
 

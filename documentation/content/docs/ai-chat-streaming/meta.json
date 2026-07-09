@@ -2,6 +2,7 @@
   "pages": [
     "index",
     "server-side-streaming",
-    "use-chat-hook"
+    "use-chat-hook",
+    "integrating-chat-hook"
   ]
 }

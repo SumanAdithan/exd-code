@@ -1,0 +1,191 @@
+---
+title: Integrating Chat Hook
+description: Connecting the client-side streaming hook to the terminal UI screens and components
+---
+
+To complete the real-time AI streaming functionality, the client-side chat hook is integrated into the CLI user interface.
+
+The following git differences detail the changes made to the message display components and the session page screen components to map raw database message representations, run the `useChat` hook stream loop, and handle active connections dynamically:
+
+```diff title="packages/cli/src/components/messages/bot-message.tsx"
+ import { useTheme } from "../../providers/theme";
+ import { SplitBorderChars } from "../border";
++import { Mode } from "@exdcode/database/enums";
++import { color } from "bun";
+ 
+ type Props = {
+-  content: string;
++  parts: ClientMessagePart[];
+   model: string;
++  mode: Mode;
++  duration?: string;
++  streaming?: boolean;
+ };
+ 
+-export function BotMessage({ content, model }: Props) {
++export function BotMessage({
++  parts,
++  model,
++  mode,
++  duration,
++  streaming = false,
++}: Props) {
+   const { colors } = useTheme();
++  const text = parts
++    .filter((p) => p.type === "text")
++    .map((p) => p.text)
++    .join("");
+ 
+   return (
+     <box width="100%" alignItems="center">
+       <box paddingY={1} width="100%">
+         <box paddingX={3} width="100%">
+-          <text>{content}</text>
++          <text>{text}</text>
+         </box>
+       </box>
+       <box paddingX={3} paddingY={1} gap={1} width="100%">
+         <box flexDirection="row" gap={2}>
+-          <text fg={colors.primary}>◉</text>
+-          <text>{model}</text>
++          <text fg={mode === Mode.PLAN ? colors.planMode : colors.primary}>
++            ◉
++          </text>
++          <box flexDirection="row" gap={1}>
++            <text>{mode === Mode.PLAN ? "Plan" : "Build"}</text>
++            <text attributes={TextAttributes.DIM} fg={colors.dimSeparator}>
++              &gt;
++            </text>
++            <text attributes={TextAttributes.DIM}>{model}</text>
++            {duration && (
++              <>
++                <text attributes={TextAttributes.DIM} fg={colors.dimSeparator}>
++                  &gt;
++                </text>
++                <text attributes={TextAttributes.DIM}>{duration}</text>
+              </>
+            )}
+          </box>
+        </box>
+      </box>
+    </box>
+```
+
+```diff title="packages/cli/src/screens/session.tsx"
+ import { useParams, useLocation, useNavigate } from "react-router";
+ import type { InferResponseType } from "hono/client";
+ import { z } from "zod";
+-
++import prettyMs from "pretty-ms";
++import {
++  DEFAULT_CHAT_MODEL_ID,
++  type SupportedChatModelId,
++} from "@exdcode/shared";
+ import { SessionShell } from "../components/session-shell";
+ import { UserMessage, BotMessage, ErrorMessage } from "../components/messages";
+ import { useToast } from "../providers/toast";
+ import { apiClient } from "../lib/api-client";
++import { useChat } from "../hooks/use-chat";
++import type { Message, ClientMessagePart } from "../hooks/use-chat";
+ import { getErrorMessage } from "../lib/http-errors";
+ 
+ type SessionData = InferResponseType<
+@@ -20,11 +26,81 @@ const sessionLocationSchema = z.object({
+   ),
+ });
+ 
+-function ChatMessage({ msg }: { msg: SessionData["messages"][number] }) {
+-  if (msg.role === "USER") return <UserMessage message={msg.content} />;
+-  if (msg.role === "ERROR") return <ErrorMessage message={msg.content} />;
++function mapDbMessages(dbMessages: SessionData["messages"]): Message[] {
++  return dbMessages.map((m): Message => {
++    if (m.role === "ERROR") {
++      return { id: m.id, role: "error", content: m.content };
++    }
++
++    if (m.role === "USER") {
++      return {
++        id: m.id,
++        role: "user",
++        content: m.content,
++        mode: m.mode,
++        model: m.model as SupportedChatModelId,
++      };
++    }
++
++    return {
++      id: m.id,
++      role: "assistant",
++      content: m.content,
++      model: m.model as SupportedChatModelId,
++      mode: m.mode,
++      parts: [{ type: "text", text: m.content }],
++      ...(m.duration != null ? { duration: prettyMs(m.duration * 1000) } : {}),
++    };
++  });
++}
++
++function ChatMessage({ msg }: { msg: Message }) {
++  if (msg.role === "user") return <UserMessage message={msg.content} />;
++  if (msg.role === "error") return <ErrorMessage message={msg.content} />;
+ 
+-  return <BotMessage content={msg.content} model={msg.model} />;
++  return (
++    <BotMessage
++      parts={msg.parts}
++      model={msg.model}
++      mode={msg.mode}
++      duration={msg.duration}
++      streaming={false}
++    />
++  );
++}
++
++function SessionChat({ session}: { session: SessionData } ) {
++  const [initialMessages] = useState(() => mapDbMessages(session.messages));
++  const { messages, streaming, submit, abort } = useChat(
++    session.id,
++    initialMessages,
++  );
++
++  // Stop the pending reply when the user leaves this session
++  useEffect(() => {
++    return () => abort();
++  }, [abort]);
++
++  return (
++    <SessionShell
++      onSubmit={(text) =>
++        submit({ userText: text, mode: "BUILD", model: DEFAULT_CHAT_MODEL_ID })
++      }
++      loading={streaming.status === "streaming"}
++    >
++      {messages.map((msg) => (
++        <ChatMessage key={msg.id} msg={msg} />
++      ))}
++      {streaming.status === "streaming" && streaming.parts.length > 0 && (
++        <BotMessage
++          parts={streaming.parts}
++          model={streaming.model}
++          mode={streaming.mode}
++          streaming
++        />
++      )}
++    </SessionShell>
++  );
+ }
+ 
+ export function Session() {
+@@ -79,11 +155,5 @@ export function Session() {
+     return <SessionShell onSubmit={() => {}} inputDisabled loading />;
+   }
+ 
+-  return (
+-    <SessionShell onSubmit={() => {}} inputDisabled>
+-      {session.messages.map((msg) => (
+-        <ChatMessage key={msg.id} msg={msg} />
+-      ))}
+-    </SessionShell>
+-  );
++  return <SessionChat key={session.id} session={session} />;
+ }
