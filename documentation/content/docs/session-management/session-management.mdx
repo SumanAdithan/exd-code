@@ -1,0 +1,212 @@
+---
+title: CLI Implementation
+description: Detailed implementation of session browsing, navigation, and dialog drawers
+---
+
+To allow users to browse and switch between historical conversation threads, session management is integrated into the CLI application. This includes displaying a searchable list of past sessions in a dialog drawer, formatting timestamps, and navigating dynamically using memory routing.
+
+#### Session List Dialog (`sessions-dialog.tsx`)
+
+A new dialog component, `SessionDialogContent`, was introduced to fetch, list, and filter previous chat sessions using search query matches.
+
+```tsx title="packages/cli/src/components/dialogs/sessions-dialog.tsx"
+import { useCallback, useEffect, useState } from "react";
+import { TextAttributes } from "@opentui/core";
+import { format } from "date-fns";
+import { useNavigate } from "react-router";
+import { useDialog } from "../../providers/dialog";
+import { useToast } from "../../providers/toast";
+import { apiClient } from "../../lib/api-client";
+import { getErrorMessage } from "../../lib/http-errors";
+import { DialogSearchList } from "../dialog-search-list";
+import type { InferResponseType } from "hono/client";
+
+type Session = InferResponseType<
+  (typeof apiClient.sessions)["$get"],
+  200
+>[number];
+
+export const SessionDialogContent = () => {
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { close } = useDialog();
+  const navigate = useNavigate();
+  const { show } = useToast();
+
+  useEffect(() => {
+    let ignore = false;
+
+    const fetchSessions = async () => {
+      try {
+        const res = await apiClient.sessions.$get();
+        if (!res.ok) {
+          throw new Error(await getErrorMessage(res));
+        }
+
+        const data = await res.json();
+
+        if (!ignore) {
+          setSessions(data);
+          setLoading(false);
+        }
+      } catch (error) {
+        if (!ignore) {
+          show({
+            variant: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to fetch sessions",
+          });
+          close();
+        }
+      }
+    };
+
+    fetchSessions();
+
+    return () => {
+      ignore = true;
+    };
+  }, [close, show]);
+
+  const handleSelect = useCallback(
+    (session: Session) => {
+      close();
+      navigate(`/sessions/${session.id}`);
+    },
+    [close, navigate],
+  );
+
+  if (loading) {
+    return (
+      <box flexDirection="column">
+        <text attributes={TextAttributes.DIM}>Loading sessions...</text>
+      </box>
+    );
+  }
+
+  return (
+    <DialogSearchList
+      items={sessions}
+      onSelect={handleSelect}
+      filterFn={(s, query) =>
+        s.title.toLowerCase().includes(query.toLowerCase())
+      }
+      renderItem={(session, isSelected) => (
+        <>
+          <text selectable={false} fg={isSelected ? "black" : "white"}>
+            {session.title}
+          </text>
+          <box flexGrow={1} />
+          <text
+            selectable={false}
+            fg={isSelected ? "black" : undefined}
+            attributes={TextAttributes.DIM}
+          >
+            {format(new Date(session.createdAt), "hh:mm a")}
+          </text>
+        </>
+      )}
+      getKey={(s) => s.id}
+      placeholder="Search sessions"
+      emptyText="No matching sessions"
+    />
+  );
+};
+```
+
+#### Git Differences
+
+The following git differences detail the integration changes made to packages, menus, dialog mappings, and context routers to support session selection:
+
+```diff title="packages/cli/package.json"
+@@ -19,6 +19,7 @@
+     "@exdcode/shared": "workspace:*",
+     "@opentui/core": "^0.4.2",
+     "@opentui/react": "^0.4.2",
++    "date-fns": "^4.4.0",
+     "eventsource-parser": "^3.1.0",
+     "hono": "^4.12.27",
+     "opentui-spinner": "^0.0.7",
+```
+
+```diff title="packages/cli/src/components/command-menu/types.ts"
+@@ -5,6 +5,7 @@ export type CommandContext = {
+   exit: () => void;
+   toast: ToastContextValue;
+   dialog: DialogContextValue;
++  navigate: (path: string) => void;
+ };
+ 
+ export type Command = {
+```
+
+```diff title="packages/cli/src/components/command-menu/commands.tsx"
+@@ -1,4 +1,4 @@
+-import { ThemeDialogContent } from "../dialog";
++import { SessionDialogContent, ThemeDialogContent } from "../dialogs";
+ import type { Command } from "./types";
+ 
+ export const COMMANDS: Command[] = [
+@@ -7,7 +7,7 @@ export const COMMANDS: Command[] = [
+     description: "Start a new conversation",
+     value: "/new",
+     action: (ctx) => {
+-      ctx.toast.show({ message: "Starting new conversation..." });
++      ctx.navigate("/");
+     },
+   },
+   {
+@@ -37,7 +37,10 @@ export const COMMANDS: Command[] = [
+     description: "Browse past sessions",
+     value: "/sessions",
+     action: (ctx) => {
+-      ctx.toast.show({ message: "Loading sessions..." });
++      ctx.dialog.open({
++        title: "Select Theme",
++        children: <SessionDialogContent />,
++      });
+     },
+   },
+   {
+```
+
+```diff title="packages/cli/src/components/input-bar.tsx"
+@@ -28,6 +29,7 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
+   const textareaRef = useRef<TextareaRenderable>(null);
+   const onSubmitRef = useRef<() => void>(() => {});
+   const renderer = useRenderer();
++  const navigate = useNavigate();
+   const toast = useToast();
+   const dialog = useDialog();
+   const { isTopLayer, setResponder } = useKeyboardLayer();
+@@ -75,12 +77,13 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
+           exit: () => renderer.destroy(),
+           toast,
+           dialog,
++          navigate,
+         });
+       } else {
+         textarea.insertText(command.value + " ");
+       }
+     },
+-    [renderer, toast, dialog],
++    [renderer, toast, dialog, navigate],
+   );
+ 
+   const handleCommandExecute = useCallback(
+```
+
+```diff title="packages/server/package.json"
+@@ -7,8 +7,7 @@
+   },
+   "scripts": {
+     "dev": "bun run --hot src/index.ts",
+-    "build": "bun build src/index.ts --outdir dist --target bun",
+-    "postinstall": "bun run --cdw ../database db:generator"
++    "build": "bun build src/index.ts --outdir dist --target bun"
+   },
+   "dependencies": {
+     "@ai-sdk/anthropic": "^4.0.8",
+```

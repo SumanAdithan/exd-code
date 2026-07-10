@@ -35,3 +35,7 @@ Ai chat streaming
     - use chat hook
     - integrating chat hook
     - interruption
+
+Session management & configuration
+    - session management
+    - prompt configuration

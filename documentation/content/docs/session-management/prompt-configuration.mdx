@@ -1,0 +1,440 @@
+---
+title: Prompt Configuration
+description: Detailed implementation of prompt configuration context providers and interactive agent drawers
+---
+
+To allow users to dynamically switch between agent modes (Plan vs. Build) and select different chat models, prompt configuration is integrated into the CLI application. This includes creating a dynamic provider context, toggling modes quickly using the tab key, and selecting options via dialog drawers.
+
+<div className="my-8 p-6 bg-slate-50 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl max-w-xl mx-auto shadow-sm">
+  <h3 className="text-purple-600 dark:text-purple-400 font-bold text-xl mb-6 text-center font-sans">Step 2: Prompt Config</h3>
+  
+  <div className="flex flex-col items-center gap-4">
+    
+    {/* PromptConfigProvider */}
+    <div className="w-56 py-3 bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border border-purple-400 dark:border-purple-800 rounded-xl text-center font-semibold text-sm">
+      PromptConfigProvider
+    </div>
+
+    {/* Split lines */}
+    <div className="w-full flex justify-between px-20">
+      <span className="text-purple-400 text-xl font-bold leading-none">&#8601;</span>
+      <span className="text-purple-400 text-xl font-bold leading-none">&#8600;</span>
+    </div>
+
+    {/* Mode & Model */}
+    <div className="w-full flex justify-between px-4">
+      <div className="w-40 py-3 bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-400 dark:border-amber-800 rounded-xl text-center font-semibold text-sm">
+        Mode
+      </div>
+      <div className="w-40 py-3 bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-400 dark:border-amber-800 rounded-xl text-center font-semibold text-sm">
+        Model
+      </div>
+    </div>
+
+    {/* Vertical Arrows down */}
+    <div className="w-full flex justify-between px-20">
+      <span className="text-slate-400 text-xl font-bold leading-none">&darr;</span>
+      <span className="text-slate-400 text-xl font-bold leading-none">&darr;</span>
+    </div>
+
+    {/* Tab key & /models Dialog */}
+    <div className="w-full flex justify-between px-4">
+      <div className="w-40 p-3 bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border border-purple-400 dark:border-purple-800 rounded-xl text-center text-xs font-semibold">
+        Tab key<br/>Plan / Build
+      </div>
+      <div className="w-40 py-3 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-800 rounded-xl text-center font-mono text-xs font-medium">
+        /models Dialog
+      </div>
+    </div>
+
+    {/* Vertical Arrows/Connectors down */}
+    <div className="w-full flex justify-between px-20">
+      <span className="text-slate-400 text-xl font-bold leading-none">&darr;</span>
+      <span className="text-slate-400 text-xl font-bold leading-none">&darr;</span>
+    </div>
+
+    {/* /agents Dialog & Status Bar */}
+    <div className="w-full flex justify-between px-4 items-start">
+      <div className="w-40 py-3 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-800 rounded-xl text-center font-mono text-xs font-medium">
+        /agents Dialog
+      </div>
+      <div className="w-40 flex flex-col items-center gap-1">
+        <div className="w-full py-3 bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-400 dark:border-rose-800 rounded-xl text-center font-semibold text-sm">
+          Status Bar
+        </div>
+        <span className="text-[10px] text-slate-400 font-mono">Build &gt; claude-sonnet-4-5</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+### New Components & Providers
+
+#### 1. Prompt Config Provider (`prompt-config/index.tsx`)
+
+A new provider, `PromptConfigProvider`, was created to manage state for the active agent mode and chat model.
+
+```tsx title="packages/cli/src/providers/prompt-config/index.tsx"
+import { createContext, useContext, useState, useCallback } from "react";
+import type { ReactNode } from "react";
+import {
+  DEFAULT_CHAT_MODEL_ID,
+  type SupportedChatModelId,
+} from "@exdcode/shared";
+import { Mode } from "@exdcode/database/enums";
+
+type PromptConfigContextValue = {
+  mode: Mode;
+  toggleMode: () => void;
+  setMode: (mode: Mode) => void;
+  model: SupportedChatModelId;
+  setModel: (mode: SupportedChatModelId) => void;
+};
+
+const PromptConfigContext = createContext<PromptConfigContextValue | null>(
+  null,
+);
+
+export function usePromptConfig(): PromptConfigContextValue {
+  const value = useContext(PromptConfigContext);
+  if (!value) {
+    throw new Error(
+      "usePromptConfig must be used within a PromptConfigProvider",
+    );
+  }
+
+  return value;
+}
+
+export function PromptConfigProvider({ children }: { children: ReactNode }) {
+  const [mode, setMode] = useState<Mode>(Mode.BUILD);
+  const [model, setModel] = useState<SupportedChatModelId>(
+    DEFAULT_CHAT_MODEL_ID,
+  );
+
+  const toggleMode = useCallback(() => {
+    setMode((m) => (m === Mode.BUILD ? Mode.PLAN : Mode.BUILD));
+  }, []);
+
+  return (
+    <PromptConfigContext.Provider
+      value={{ mode, toggleMode, setMode, model, setModel }}
+    >
+      {children}
+    </PromptConfigContext.Provider>
+  );
+}
+```
+
+#### 2. Models Dialog (`models-dialog.tsx`)
+
+A search dialog component to select different chat models.
+
+```tsx title="packages/cli/src/components/dialogs/models-dialog.tsx"
+import { useCallback } from "react";
+import { useDialog } from "../../providers/dialog";
+import { DialogSearchList } from "../dialog-search-list";
+import type { SupportedChatModelId } from "@exdcode/shared";
+
+type ModelsDialogContentProps = {
+  models: SupportedChatModelId[];
+  onSelectModel: (modelId: SupportedChatModelId) => void;
+};
+
+export const ModelsDialogContent = ({
+  models,
+  onSelectModel,
+}: ModelsDialogContentProps) => {
+  const dialog = useDialog();
+
+  const handleSelect = useCallback(
+    (modelId: SupportedChatModelId) => {
+      onSelectModel(modelId);
+      dialog.close();
+    },
+    [onSelectModel, dialog],
+  );
+
+  return (
+    <DialogSearchList
+      items={models}
+      onSelect={handleSelect}
+      filterFn={(modelId, query) =>
+        modelId.toLowerCase().includes(query.toLocaleLowerCase())
+      }
+      renderItem={(modelId, isSelected) => (
+        <text selectable={false} fg={isSelected ? "black" : "white"}>
+          {modelId}
+        </text>
+      )}
+      getKey={(modelId) => modelId}
+      placeholder="Search models"
+      emptyText="No matching models"
+    />
+  );
+};
+```
+
+#### 3. Agents Dialog (`agents-dialog.tsx`)
+
+A search dialog component to toggle between active Plan/Build modes.
+
+```tsx title="packages/cli/src/components/dialogs/agents-dialog.tsx"
+import { useCallback } from "react";
+import { useDialog } from "../../providers/dialog";
+import { DialogSearchList } from "../dialog-search-list";
+import { Mode } from "@exdcode/database/enums";
+
+const AVAILABLE_MODES: Mode[] = [Mode.BUILD, Mode.PLAN];
+
+type AgentsDialogContentProps = {
+  currentMode: Mode;
+  onSelectMode: (mode: Mode) => void;
+};
+
+function getModeLabel(mode: Mode) {
+  return mode === Mode.PLAN ? "Plan" : "Build";
+}
+
+export const AgentsDialogContent = ({
+  currentMode,
+  onSelectMode,
+}: AgentsDialogContentProps) => {
+  const dialog = useDialog();
+
+  const handleSelect = useCallback(
+    (nextMode: Mode) => {
+      onSelectMode(nextMode);
+      dialog.close();
+    },
+    [onSelectMode, dialog],
+  );
+
+  return (
+    <DialogSearchList
+      items={AVAILABLE_MODES}
+      onSelect={handleSelect}
+      filterFn={(item, query) =>
+        getModeLabel(item).toLowerCase().includes(query.toLocaleLowerCase())
+      }
+      renderItem={(item, isSelected) => (
+        <text selectable={false} fg={isSelected ? "black" : "white"}>
+          {item === currentMode ? " • " : "   "}
+          {getModeLabel(item)}
+        </text>
+      )}
+      getKey={(item) => item}
+      placeholder="Search agents"
+      emptyText="No matching agents"
+    />
+  );
+};
+```
+
+---
+
+### Git Differences
+
+The following git differences detail the integration changes made to commands, UI components, layouts, and status bars to support prompt configuration:
+
+```diff title="packages/cli/src/components/command-menu/types.ts"
+ import type { DialogContextValue } from "../../providers/dialog";
+ import type { ToastContextValue } from "../../providers/toast";
++import type { Mode } from "@exdcode/database/enums";
+ 
+ export type CommandContext = {
+   exit: () => void;
+   toast: ToastContextValue;
+   dialog: DialogContextValue;
+   navigate: (path: string) => void;
++  mode: Mode;
++  setMode: (mode: Mode) => void;
++  setModel: (model: SupportedChatModelId) => void;
+ };
+```
+
+```diff title="packages/cli/src/components/command-menu/commands.tsx"
+-import { SessionDialogContent, ThemeDialogContent } from "../dialogs";
++import { SUPPORTED_CHAT_MODELS } from "@exdcode/shared";
++import {
++  AgentsDialogContent,
++  ModelsDialogContent,
++  SessionDialogContent,
++  ThemeDialogContent,
++} from "../dialogs";
+ import type { Command } from "./types";
+ 
+ export const COMMANDS: Command[] = [
+@@ -16,8 +22,13 @@ export const COMMANDS: Command[] = [
+     value: "/agents",
+     action: (ctx) => {
+       ctx.dialog.open({
+-        title: "Select Mode",
+-        children: <text>Agent selection coming soon...</text>,
++        title: "Select Agent",
++        children: (
++          <AgentsDialogContent
++            currentMode={ctx.mode}
++            onSelectMode={ctx.setMode}
++          />
++        ),
+       });
+     },
+   },
+@@ -28,7 +39,12 @@ export const COMMANDS: Command[] = [
+     action: (ctx) => {
+       ctx.dialog.open({
+         title: "Select Model",
+-        children: <text>Model selection coming soon...</text>,
++        children: (
++          <ModelsDialogContent
++            models={SUPPORTED_CHAT_MODELS.map((model) => model.id)}
++            onSelectModel={ctx.setModel}
++          />
++        ),
+       });
+     },
+   },
+```
+
+```diff title="packages/cli/src/components/dialogs/index.tsx"
+ export { ThemeDialogContent } from "./theme-dialog";
+ export { SessionDialogContent } from "./sessions-dialog";
++export { AgentsDialogContent } from "./agents-dialog";
++export { ModelsDialogContent } from "./models-dialog";
+```
+
+```diff title="packages/cli/src/components/input-bar.tsx"
+ export function InputBar({ onSubmit, disabled = false }: Props) {
++  const { mode, toggleMode, setMode, setModel } = usePromptConfig();
+   const textareaRef = useRef<TextareaRenderable>(null);
+   const onSubmitRef = useRef<() => void>(() => {});
+   const renderer = useRenderer();
+@@ -78,12 +81,15 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
+           toast,
+           dialog,
+           navigate,
++          mode,
++          setMode,
++          setModel,
+         });
+       } else {
+         textarea.insertText(command.value + " ");
+       }
+     },
+-    [renderer, toast, dialog, navigate],
++    [renderer, toast, dialog, navigate, mode, setMode, setModel],
+   );
+ 
+@@ -116,6 +122,15 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
+     handleSubmit();
+   };
+ 
++  useKeyboard((key) => {
++    if (disabled) return;
++    if (!isTopLayer("base")) return;
++    if (key.name === "tab") {
++      key.preventDefault();
++      toggleMode();
++    }
++  });
++
+   // Register the base layer responder for ctrl+c dismissal
+   useEffect(() => {
+     setResponder("base", () => {
+@@ -138,7 +153,7 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
+     <box width="100%" alignItems="center">
+       <box
+         border={["left"]}
+-        borderColor={colors.primary}
++        borderColor={mode === Mode.BUILD ? colors.primary : colors.planMode}
+         width="100%"
+         customBorderChars={SplitBorderChars}
+       >
+```
+
+```diff title="packages/cli/src/components/session-shell.tsx"
+ type Props = {
+   children?: ReactNode;
+   onSubmit: (text: string) => void;
+   inputDisabled?: boolean;
+   loading?: boolean;
++  interruptible?: boolean;
+ };
+ 
+ export function SessionShell({
+@@ -18,6 +19,8 @@ export function SessionShell({
+   loading = false,
+   interruptible = false,
+ }: Props) {
++  const { mode } = usePromptConfig();
++
+   return (
+     <box
+@@ -48,7 +51,7 @@ export function SessionShell({
+         <box flexDirection="row" alignItems="center" gap={2}>
+           {loading ? (
+             <>
+-              <Spinner />
++              <Spinner mode={mode} />
+               {interruptible ? <text>esc to interrupt</text> : null}
+             </>
+           ) : null}
+```
+
+```diff title="packages/cli/src/components/spinner.tsx"
+-export function Spinner() {
++type Props = {
++  mode?: Mode;
++};
++
++export function Spinner({ mode = Mode.BUILD }: Props) {
+   const { colors } = useTheme();
++  const activeColor = mode === Mode.PLAN ? colors.planMode : colors.primary;
+ 
+   return <spinner name="aesthetic" color={colors.primary}></spinner>;
+ }
+```
+
+```diff title="packages/cli/src/components/status-bar.tsx"
+ export function StatusBar() {
++  const { mode, model } = usePromptConfig();
+   const { colors } = useTheme();
+ 
+   return (
+     <box flexDirection="row" gap={1}>
+-      <text fg={colors.primary}>Build</text>
++      <text fg={mode === Mode.PLAN ? colors.planMode : colors.primary}>
++        {mode === Mode.PLAN ? "Plan" : "Build"}
++      </text>
++
+       <text attributes={TextAttributes.DIM} fg={colors.dimSeparator}>
+         &rsaquo;
+       </text>
+-      <text>gemini</text>
++      <text>{model}</text>
+     </box>
+   );
+ }
+```
+
+```diff title="packages/cli/src/layouts/root-layout.tsx"
+ export function RootLayout() {
+   return (
+     <ThemeProvider>
+       <ToastProvider>
+         <KeyboardLayerProvider>
+           <DialogProvider>
+-            <ThemedRoot>
+-              <Outlet />
+-            </ThemedRoot>
++            <PromptConfigProvider>
++              <ThemedRoot>
++                <Outlet />
++              </ThemedRoot>
++            </PromptConfigProvider>
+           </DialogProvider>
+         </KeyboardLayerProvider>
+       </ToastProvider>
+```

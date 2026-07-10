@@ -6,6 +6,7 @@
     "routing-and-screen-layout",
     "server-and-database",
     "sentry-monitoring",
-    "ai-chat-streaming"
+    "ai-chat-streaming",
+    "session-management"
   ]
 }

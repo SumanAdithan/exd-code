@@ -1,4 +1,10 @@
-import { SessionDialogContent, ThemeDialogContent } from "../dialogs";
+import { SUPPORTED_CHAT_MODELS } from "@exdcode/shared";
+import {
+  AgentsDialogContent,
+  ModelsDialogContent,
+  SessionDialogContent,
+  ThemeDialogContent,
+} from "../dialogs";
 import type { Command } from "./types";
 
 export const COMMANDS: Command[] = [
@@ -16,8 +22,13 @@ export const COMMANDS: Command[] = [
     value: "/agents",
     action: (ctx) => {
       ctx.dialog.open({
-        title: "Select Mode",
-        children: <text>Agent selection coming soon...</text>,
+        title: "Select Agent",
+        children: (
+          <AgentsDialogContent
+            currentMode={ctx.mode}
+            onSelectMode={ctx.setMode}
+          />
+        ),
       });
     },
   },
@@ -28,7 +39,12 @@ export const COMMANDS: Command[] = [
     action: (ctx) => {
       ctx.dialog.open({
         title: "Select Model",
-        children: <text>Model selection coming soon...</text>,
+        children: (
+          <ModelsDialogContent
+            models={SUPPORTED_CHAT_MODELS.map((model) => model.id)}
+            onSelectModel={ctx.setModel}
+          />
+        ),
       });
     },
   },
