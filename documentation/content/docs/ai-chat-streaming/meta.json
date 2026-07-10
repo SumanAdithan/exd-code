@@ -3,6 +3,7 @@
     "index",
     "server-side-streaming",
     "use-chat-hook",
-    "integrating-chat-hook"
+    "integrating-chat-hook",
+    "interruption"
   ]
 }

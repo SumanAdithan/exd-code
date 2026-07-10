@@ -11,6 +11,7 @@ type Props = {
   mode: Mode;
   duration?: string;
   streaming?: boolean;
+  interrupted?: boolean;
 };
 
 export function BotMessage({
@@ -19,6 +20,7 @@ export function BotMessage({
   mode,
   duration,
   streaming = false,
+  interrupted = false,
 }: Props) {
   const { colors } = useTheme();
   const text = parts
@@ -35,21 +37,34 @@ export function BotMessage({
       </box>
       <box paddingX={3} paddingY={1} gap={1} width="100%">
         <box flexDirection="row" gap={2}>
-          <text fg={mode === Mode.PLAN ? colors.planMode : colors.primary}>
+          <text
+            attributes={interrupted ? TextAttributes.DIM : 0}
+            fg={
+              interrupted
+                ? undefined
+                : mode === Mode.PLAN
+                  ? colors.planMode
+                  : colors.primary
+            }
+          >
             ◉
           </text>
           <box flexDirection="row" gap={1}>
-            <text>{mode === Mode.PLAN ? "Plan" : "Build"}</text>
+            <text attributes={interrupted ? TextAttributes.DIM : 0}>
+              {mode === Mode.PLAN ? "Plan" : "Build"}
+            </text>
             <text attributes={TextAttributes.DIM} fg={colors.dimSeparator}>
               &gt;
             </text>
             <text attributes={TextAttributes.DIM}>{model}</text>
-            {duration && (
+            {(duration || interrupted) && (
               <>
                 <text attributes={TextAttributes.DIM} fg={colors.dimSeparator}>
                   &gt;
                 </text>
-                <text attributes={TextAttributes.DIM}>{duration}</text>
+                <text attributes={TextAttributes.DIM}>
+                  {interrupted ? "interrupted" : duration}
+                </text>
               </>
             )}
           </box>

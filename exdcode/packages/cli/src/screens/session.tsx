@@ -14,6 +14,9 @@ import { apiClient } from "../lib/api-client";
 import { useChat } from "../hooks/use-chat";
 import type { Message, ClientMessagePart } from "../hooks/use-chat";
 import { getErrorMessage } from "../lib/http-errors";
+import { useKeyboard } from "@opentui/react";
+import { MessageStatus } from "@exdcode/database/enums";
+import { useKeyboardLayer } from "../providers/keyboard-layer";
 
 type SessionData = InferResponseType<
   (typeof apiClient.sessions)[":id"]["$get"],
@@ -50,6 +53,7 @@ function mapDbMessages(dbMessages: SessionData["messages"]): Message[] {
       mode: m.mode,
       parts: [{ type: "text", text: m.content }],
       ...(m.duration != null ? { duration: prettyMs(m.duration * 1000) } : {}),
+      interrupt: m.status === MessageStatus.INTERRUPTED,
     };
   });
 }
@@ -65,13 +69,15 @@ function ChatMessage({ msg }: { msg: Message }) {
       mode={msg.mode}
       duration={msg.duration}
       streaming={false}
+      interrupted={msg.interrupt}
     />
   );
 }
 
-function SessionChat({ session}: { session: SessionData } ) {
+function SessionChat({ session }: { session: SessionData }) {
   const [initialMessages] = useState(() => mapDbMessages(session.messages));
-  const { messages, streaming, submit, abort } = useChat(
+  const { isTopLayer } = useKeyboardLayer();
+  const { messages, streaming, submit, abort, interrupt } = useChat(
     session.id,
     initialMessages,
   );
@@ -81,12 +87,24 @@ function SessionChat({ session}: { session: SessionData } ) {
     return () => abort();
   }, [abort]);
 
+  useKeyboard((key) => {
+    if (
+      key.name == "escape" &&
+      isTopLayer("base") &&
+      streaming.status === "streaming"
+    ) {
+      key.preventDefault();
+      interrupt();
+    }
+  });
+
   return (
     <SessionShell
       onSubmit={(text) =>
         submit({ userText: text, mode: "BUILD", model: DEFAULT_CHAT_MODEL_ID })
       }
       loading={streaming.status === "streaming"}
+      interruptible={streaming.status === "streaming"}
     >
       {messages.map((msg) => (
         <ChatMessage key={msg.id} msg={msg} />
