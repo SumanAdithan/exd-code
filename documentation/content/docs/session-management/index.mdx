@@ -1,0 +1,89 @@
+---
+title: Session Management
+description: Overview of session management, browsing, and navigation controls
+---
+
+# Session Management
+
+This section documents how the console application handles conversation histories, active sessions list queries, and route transitions in the TUI stack:
+
+<div className="my-8 p-6 bg-slate-50 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl max-w-xl mx-auto shadow-sm">
+  <h3 className="text-blue-600 dark:text-blue-400 font-bold text-xl mb-6 text-center font-sans">Step 1: Session Management</h3>
+  
+  <div className="flex flex-col gap-6 items-center">
+    
+    {/* Flow 1: /sessions to Sessions Dialog */}
+    <div className="w-full flex items-center justify-between px-4">
+      <div className="w-40 py-3 bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-400 dark:border-blue-800 rounded-xl text-center font-mono text-sm font-medium">
+        /sessions
+      </div>
+      <div className="flex-grow flex justify-center text-slate-400 text-xl font-bold">
+        &rarr;
+      </div>
+      <div className="w-40 py-3 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-800 rounded-xl text-center font-semibold text-sm">
+        Sessions Dialog
+      </div>
+    </div>
+    
+    {/* Vertical Select Connector */}
+    <div className="w-full flex justify-end px-4 pr-18">
+      <div className="w-40 flex flex-col items-center">
+        <span className="text-[10px] text-slate-500 font-medium select-none mb-1">select</span>
+        <span className="text-slate-400 text-xl font-bold leading-none">&darr;</span>
+      </div>
+    </div>
+
+    {/* DialogSearchList & API: $get() */}
+    <div className="w-full flex items-center justify-between px-4">
+      <div className="w-40 p-3 bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800 rounded-xl text-center text-xs">
+        <div className="font-semibold mb-1">DialogSearchList</div>
+        <div className="text-[10px] text-slate-500">filter + keyboard nav</div>
+      </div>
+      <div className="flex-grow flex justify-center text-slate-400 text-xl font-bold">
+        <span className="border-t-2 border-dashed border-slate-300 dark:border-slate-700 w-12 block"></span>
+      </div>
+      <div className="w-40 py-3 bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-400 dark:border-amber-800 rounded-xl text-center font-mono text-sm font-medium">
+        API: $get()
+      </div>
+    </div>
+
+    {/* Vertical Connector from API to navigate */}
+    <div className="w-full flex justify-end px-4 pr-18">
+      <div className="w-40 flex justify-center">
+        <span className="text-slate-400 text-xl font-bold">&darr;</span>
+      </div>
+    </div>
+
+    {/* Date-Fns & navigate("/sessions/:id") */}
+    <div className="w-full flex items-center justify-between px-4">
+      <div className="w-40 p-3 bg-orange-100 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 border border-orange-400 dark:border-orange-800 rounded-xl text-center text-xs">
+        <div className="font-semibold mb-1">date-fns format</div>
+        <div className="text-[10px] text-slate-500">hh:mm a timestamps</div>
+      </div>
+      <div className="flex-grow"></div>
+      <div className="w-40 py-3 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-800 rounded-xl text-center font-mono text-xs font-medium">
+        navigate("/sessions/:id")
+      </div>
+    </div>
+
+    {/* Divider Line */}
+    <div className="w-full border-t border-slate-200 dark:border-zinc-800 my-2"></div>
+
+    {/* Flow 2: /new to navigate("/") */}
+    <div className="w-full flex items-center justify-between px-4">
+      <div className="w-40 py-3 bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-400 dark:border-blue-800 rounded-xl text-center font-mono text-sm font-medium">
+        /new
+      </div>
+      <div className="flex-grow flex justify-center text-slate-400 text-xl font-bold">
+        &rarr;
+      </div>
+      <div className="w-40 py-3 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-800 rounded-xl text-center font-mono text-sm font-medium">
+        navigate("/")
+      </div>
+    </div>
+
+  </div>
+</div>
+
+- **[CLI Implementation](session-management)**: Browsing and switching between past sessions.
+- **[Prompt Configuration](prompt-configuration)**: Dynamic toggles for active agent modes and models.
