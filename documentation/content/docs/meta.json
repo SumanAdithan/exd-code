@@ -1,3 +1,11 @@
 {
-  "pages": ["index", "project-setup", "ui-infrastructure", "routing-and-screen-layout", "server-and-database"]
+  "pages": [
+    "index",
+    "project-setup",
+    "ui-infrastructure",
+    "routing-and-screen-layout",
+    "server-and-database",
+    "sentry-monitoring",
+    "ai-chat-streaming"
+  ]
 }

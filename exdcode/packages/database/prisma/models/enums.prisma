@@ -11,5 +11,5 @@ enum Mode{
 
 enum MessageStatus{
     COMPLETE
-    INTRUPTED
+    INTERRUPTED
 }

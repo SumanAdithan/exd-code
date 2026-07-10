@@ -1,0 +1,472 @@
+---
+title: Interruption
+description: Handling connection drops and user-initiated interruption during AI chat streaming
+---
+
+To handle connection drops and user-initiated stream cancellations, interruption mechanisms are integrated into both the client-side chat hook and the server-side response stream.
+
+The following git differences detail the changes made to intercept abort signals, display the option to interrupt during streaming, listen for the escape key to abort streaming, persist partially generated messages to the database under an interrupted status, and capture partial responses in the UI history state:
+
+```diff title="packages/server/src/routes/chat.ts"
+@@ -20,6 +20,8 @@ const submitValidator = zValidator("json", submitSchema, (result, c) => {
+   }
+ });
+ 
++const activeResumeSessionIds = new Set<string>();
++
+ // Strip error messages and empty assistant messages from the conversation
+ function buildConversationHistory(
+   messages: {
+@@ -41,6 +43,21 @@ function buildConversationHistory(
+   });
+ }
+ 
++function getResumableUserMessage(
++  messages: {
++    role: "USER" | "ASSISTANT" | "ERROR";
++    model: string;
++    mode: Mode;
++  }[],
++) {
++  const lastMessages = messages[messages.length - 1];
++  if (!lastMessages || lastMessages.role !== "USER") {
++    return null;
++  }
++
++  return lastMessages;
++}
++
+ type StreamParams = {
+   sessionId: string;
+   model: string;
+@@ -49,7 +66,7 @@ type StreamParams = {
+   abortController: AbortController;
+ };
+ 
+-async function streamAiResponse(
++async function streamAIResponse(
+   stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
+   params: StreamParams,
+ ) {
+@@ -58,6 +75,24 @@ async function streamAiResponse(
+   const resolvedModel = resolveChatModel(model);
+   let fullText = "";
+ 
++  const pressistInterruptedMessage = async () => {
++    if (fullText.length === 0) return;
++
++    const elapsedMs = Date.now() - startTime;
++
++    await db.message.create({
++      data: {
++        sessionId,
++        role: "ASSISTANT",
++        status: MessageStatus.INTERRUPTED,
++        model,
++        content: fullText,
++        mode,
++        duration: Math.round(elapsedMs / 1000),
++      },
++    });
++  };
++
+   try {
+     const result = aiStreamText({
+       model: resolvedModel.model,
+@@ -83,6 +118,7 @@ async function streamAiResponse(
+     }
+ 
+     if (stream.aborted || abortController.signal.aborted) {
++      await pressistInterruptedMessage();
+       return;
+     }
+ 
+@@ -109,6 +145,7 @@ async function streamAiResponse(
+     await stream.writeSSE({ event: "done", data: JSON.stringify(doneEvent) });
+   } catch (err) {
+     if (abortController.signal.aborted) {
++      await pressistInterruptedMessage();
+       return;
+     }
+ 
+@@ -143,50 +180,66 @@ const app = new Hono()
+       return c.json({ error: "Session not found" }, 404);
+     }
+ 
+-    const lastMessage = session.messages[session.messages.length - 1];
+-    if (!lastMessage || lastMessage.role !== "USER") {
++    const resumableMessage = getResumableUserMessage(session.messages);
++    if (!resumableMessage) {
+       return c.json(
+         { error: "Session has no pending user message to resume" },
+         409,
+       );
+     }
+ 
+-    if (!isSupportedChatModel(lastMessage.model)) {
++    if (!isSupportedChatModel(resumableMessage.model)) {
+       return c.json(
+         {
+-          error: `Session uses unsupported model: ${lastMessage.model}`,
++          error: `Session uses unsupported model: ${resumableMessage.model}`,
+         },
+         409,
+       );
+     }
+ 
++    if (activeResumeSessionIds.has(sessionId)) {
++      return c.json({ error: "Session already has an active resume" }, 409);
++    }
++
++    activeResumeSessionIds.add(sessionId);
++
+     const history = buildConversationHistory(session.messages);
+     const abortController = new AbortController();
+ 
+-    return streamSSE(
+-      c,
+-      async (stream) => {
+-        stream.onAbort(() => {
+-          abortController.abort();
+-        });
+-
+-        await streamAiResponse(stream, {
+-          sessionId,
+-          model: lastMessage.model,
+-          history,
+-          mode: lastMessage.mode,
+-          abortController,
+-        });
+-      },
+-      async (err, stream) => {
+-        const message = err instanceof Error ? err.message : String(err);
+-        const errorEvent: ChatStreamEvent = { type: "error", message };
+-        await stream.writeSSE({
+-          event: "error",
+-          data: JSON.stringify(errorEvent),
+-        });
+-      },
+-    );
++    try {
++      return streamSSE(
++        c,
++        async (stream) => {
++          stream.onAbort(() => {
++            abortController.abort();
++          });
++
++          try {
++            await streamAIResponse(stream, {
++              sessionId,
++              model: resumableMessage.model,
++              history,
++              mode: resumableMessage.mode,
++              abortController,
++            });
++          } finally {
++            activeResumeSessionIds.delete(sessionId);
++          }
++        },
++        async (err, stream) => {
++          activeResumeSessionIds.delete(sessionId);
++          const message = err instanceof Error ? err.message : String(err);
++          const errorEvent: ChatStreamEvent = { type: "error", message };
++          await stream.writeSSE({
++            event: "error",
++            data: JSON.stringify(errorEvent),
++          });
++        },
++      );
++    } catch (error) {
++      activeResumeSessionIds.delete(sessionId);
++      throw error;
++    }
+   })
+   .post("/:sessionId", submitValidator, async (c) => {
+     const sessionId = c.req.param("sessionId");
+@@ -231,7 +284,7 @@ const app = new Hono()
+           abortController.abort();
+         });
+ 
+-        await streamAiResponse(stream, {
++        await streamAIResponse(stream, {
+           sessionId,
+           model: data.model,
+           history,
+```
+
+```diff title="packages/cli/src/hooks/use-chat.ts"
+@@ -28,6 +28,7 @@ export type Message =
+       model: SupportedChatModelId;
+       parts: ClientMessagePart[];
+       duration?: string;
++      interrupt?: boolean;
+     }
+   | { id: string; role: "error"; content: string };
+ 
+@@ -46,6 +47,7 @@ type ActiveStream = {
+   mode: Mode;
+   model: SupportedChatModelId;
+   parts: ClientMessagePart[];
++  interruptCaptured: boolean;
+ };
+ 
+ type SubmitParams = {
+@@ -97,6 +99,35 @@ export function useChat(sessionId: string, initialMessage: Message[]) {
+     [isActiveRequest],
+   );
+ 
++  const capturedInterruptedMessage = useCallback(
++    (activeStream: ActiveStream) => {
++      if (activeStream.interruptCaptured || activeStream.parts.length === 0) {
++        return;
++      }
++
++      activeStream.interruptCaptured = true;
++      const parts = [...activeStream.parts];
++      const fullText = parts
++        .filter((p) => p.type === "text")
++        .map((p) => p.text)
++        .join("");
++
++      updateMessages((prev) => [
++        ...prev,
++        {
++          id: crypto.randomUUID(),
++          role: "assistant",
++          content: fullText,
++          mode: activeStream.mode,
++          model: activeStream.model,
++          parts,
++          interrupt: true,
++        },
++      ]);
++    },
++    [updateMessages],
++  );
++
+   const clearStream = useCallback(
+     (requestId: string) => {
+       if (!isActiveRequest(requestId)) return;
+@@ -208,6 +239,7 @@ export function useChat(sessionId: string, initialMessage: Message[]) {
+         mode,
+         model,
+         parts: [],
++        interruptCaptured: false,
+       };
+ 
+       activeStreamRef.current = activeStream;
+@@ -239,6 +271,22 @@ export function useChat(sessionId: string, initialMessage: Message[]) {
+     [clearStream, handleStream, isActiveRequest, updateMessages],
+   );
+ 
++  const stopAciveStream = useCallback(
++    (capturePartial: boolean) => {
++      const activeStream = activeStreamRef.current;
++      if (!activeStream) return;
++
++      if (capturePartial) {
++        capturedInterruptedMessage(activeStream);
++      }
++
++      activeStreamRef.current = null;
++      setStreaming({ status: "idle" });
++      activeStream.controller.abort();
++    },
++    [capturedInterruptedMessage],
++  );
++
+   const resume = useCallback(
+     async ({ mode, model }: Omit<SubmitParams, "userText">) => {
+       await runStream({
+@@ -268,6 +316,9 @@ export function useChat(sessionId: string, initialMessage: Message[]) {
+ 
+   const submit = useCallback(
+     async ({ userText, mode, model }: SubmitParams) => {
++      // Show the partial answer before sending the next message
++      stopAciveStream(true);
++
+       const userMessage: Message = {
+         id: crypto.randomUUID(),
+         role: "user",
+@@ -293,17 +344,16 @@ export function useChat(sessionId: string, initialMessage: Message[]) {
+         },
+       });
+     },
+-    [runStream, sessionId, updateMessages],
++    [runStream, sessionId, updateMessages, stopAciveStream],
+   );
+ 
+   const abort = useCallback(() => {
+-    const activeStream = activeStreamRef.current;
+-    if (!activeStream) return;
++    stopAciveStream(false);
++  }, [stopAciveStream]);
+ 
+-    activeStreamRef.current = null;
+-    setStreaming({ status: "idle" });
+-    activeStream.controller.abort();
+-  }, []);
++  const interrupt = useCallback(() => {
++    stopAciveStream(true);
++  }, [stopAciveStream]);
+ 
+-  return { messages, streaming, submit, abort };
++  return { messages, streaming, submit, abort, interrupt };
+ }
+```
+
+```diff title="packages/cli/src/components/session-shell.tsx"
+@@ -8,6 +8,7 @@ type Props = {
+   onSubmit: (text: string) => void;
+   inputDisabled?: boolean;
+   loading?: boolean;
++  interruptible?: boolean;
+ };
+ 
+ export function SessionShell({
+@@ -15,6 +16,7 @@ export function SessionShell({
+   onSubmit,
+   inputDisabled = false,
+   loading = false,
++  interruptible = false,
+ }: Props) {
+   return (
+     <box
+@@ -44,7 +46,12 @@ export function SessionShell({
+         paddingLeft={1}
+       >
+         <box flexDirection="row" alignItems="center" gap={2}>
+-          {loading ? <Spinner /> : null}
++          {loading ? (
++            <>
++              <Spinner />
++              {interruptible ? <text>esc to interrupt</text> : null}
++            </>
++          ) : null}
+         </box>
+         <box flexDirection="row" gap={1} flexShrink={0} marginLeft="auto">
+           <text>tab</text>
+```
+
+```diff title="packages/cli/src/components/messages/bot-message.tsx"
+@@ -11,6 +11,7 @@ type Props = {
+   mode: Mode;
+   duration?: string;
+   streaming?: boolean;
++  interrupted?: boolean;
+ };
+ 
+ export function BotMessage({
+@@ -19,6 +20,7 @@ export function BotMessage({
+   mode,
+   duration,
+   streaming = false,
++  interrupted = false,
+ }: Props) {
+   const { colors } = useTheme();
+   const text = parts
+@@ -35,21 +37,34 @@ export function BotMessage({
+       </box>
+       <box paddingX={3} paddingY={1} gap={1} width="100%">
+         <box flexDirection="row" gap={2}>
+-          <text fg={mode === Mode.PLAN ? colors.planMode : colors.primary}>
++          <text
++            attributes={interrupted ? TextAttributes.DIM : 0}
++            fg={
++              interrupted
++                ? undefined
++                : mode === Mode.PLAN
++                  ? colors.planMode
++                  : colors.primary
++            }
++          >
+             ◉
+           </text>
+           <box flexDirection="row" gap={1}>
+-            <text>{mode === Mode.PLAN ? "Plan" : "Build"}</text>
++            <text attributes={interrupted ? TextAttributes.DIM : 0}>
++              {mode === Mode.PLAN ? "Plan" : "Build"}
++            </text>
+             <text attributes={TextAttributes.DIM} fg={colors.dimSeparator}>
+               &gt;
+             </text>
+             <text attributes={TextAttributes.DIM}>{model}</text>
+-            {duration && (
++            {(duration || interrupted) && (
+               <>
+                 <text attributes={TextAttributes.DIM} fg={colors.dimSeparator}>
+                   &gt;
+                 </text>
+-                <text attributes={TextAttributes.DIM}>{duration}</text>
++                <text attributes={TextAttributes.DIM}>
++                  {interrupted ? "interrupted" : duration}
++                </text>
+               </>
+             )}
+           </box>
+```
+
+```diff title="packages/cli/src/screens/session.tsx"
+@@ -14,6 +14,9 @@ import { apiClient } from "../lib/api-client";
+ import { useChat } from "../hooks/use-chat";
+ import type { Message, ClientMessagePart } from "../hooks/use-chat";
+ import { getErrorMessage } from "../lib/http-errors";
++import { useKeyboard } from "@opentui/react";
++import { MessageStatus } from "@exdcode/database/enums";
++import { useKeyboardLayer } from "../providers/keyboard-layer";
+ 
+ type SessionData = InferResponseType<
+   (typeof apiClient.sessions)[":id"]["$get"],
+@@ -50,6 +53,7 @@ function mapDbMessages(dbMessages: SessionData["messages"]): Message[] {
+       mode: m.mode,
+       parts: [{ type: "text", text: m.content }],
+       ...(m.duration != null ? { duration: prettyMs(m.duration * 1000) } : {}),
++      interrupt: m.status === MessageStatus.INTERRUPTED,
+     };
+   });
+ }
+@@ -65,13 +69,15 @@ function ChatMessage({ msg }: { msg: Message }) {
+       mode={msg.mode}
+       duration={msg.duration}
+       streaming={false}
++      interrupted={msg.interrupt}
+     />
+   );
+ }
+ 
+-function SessionChat({ session}: { session: SessionData } ) {
++function SessionChat({ session }: { session: SessionData }) {
+   const [initialMessages] = useState(() => mapDbMessages(session.messages));
+-  const { messages, streaming, submit, abort } = useChat(
++  const { isTopLayer } = useKeyboardLayer();
++  const { messages, streaming, submit, abort, interrupt } = useChat(
+     session.id,
+     initialMessages,
+   );
+@@ -81,12 +87,24 @@ function SessionChat({ session}: { session: SessionData } ) {
+     return () => abort();
+   }, [abort]);
+ 
++  useKeyboard((key) => {
++    if (
++      key.name == "escape" &&
++      isTopLayer("base") &&
++      streaming.status === "streaming"
++    ) {
++      key.preventDefault();
++      interrupt();
++    }
++  });
++
+   return (
+     <SessionShell
+       onSubmit={(text) =>
+         submit({ userText: text, mode: "BUILD", model: DEFAULT_CHAT_MODEL_ID })
+       }
+       loading={streaming.status === "streaming"}
++      interruptible={streaming.status === "streaming"}
+     >
+       {messages.map((msg) => (
+         <ChatMessage key={msg.id} msg={msg} />
+```

@@ -28,6 +28,7 @@ packages/database/
 ## Prisma Configuration
 
 ### `package.json`
+
 The database workspace is configured to generate the Prisma client into a local `generated/` directory, leveraging the new `@prisma/adapter-pg` for optimal Postgres performance.
 
 ```json title="packages/database/package.json"
@@ -55,6 +56,7 @@ The database workspace is configured to generate the Prisma client into a local 
 ```
 
 ### Base Schema (`schema.prisma`)
+
 The base schema configures the generator and Postgres datasource.
 
 ```prisma title="packages/database/prisma/schema.prisma"
@@ -78,6 +80,7 @@ datasource db {
 By leveraging Prisma's native multi-file support, the application's domain models are modularized into a `models/` directory.
 
 ### Enums
+
 ```prisma title="packages/database/prisma/models/enums.prisma"
 enum Role{
     USER
@@ -92,11 +95,12 @@ enum Mode{
 
 enum MessageStatus{
     COMPLETE
-    INTRUPTED
+    INTERRUPTED
 }
 ```
 
 ### Session Model
+
 ```prisma title="packages/database/prisma/models/session.prisma"
 model Session{
     id String @id @default(cuid())
@@ -106,12 +110,13 @@ model Session{
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
     messages Message[]
-    
+
     @@index([userId])
 }
 ```
 
 ### Message Model
+
 ```prisma title="packages/database/prisma/models/message.prisma"
 model Message{
     id String @id @default(cuid())
@@ -134,6 +139,7 @@ model Message{
 The runtime database client connects via the Postgres adapter and is cleanly exported for the rest of the monorepo.
 
 ### `client.ts`
+
 ```typescript title="packages/database/src/client.ts"
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -151,6 +157,7 @@ export const db = new PrismaClient({ adapter });
 ```
 
 ### `enums.ts`
+
 ```typescript title="packages/database/src/enums.ts"
 export { Role, Mode, MessageStatus } from "../generated/prisma/enums";
 ```
@@ -160,6 +167,7 @@ export { Role, Mode, MessageStatus } from "../generated/prisma/enums";
 With the database package finalized, the backend server routes have been updated to completely replace the previous in-memory mock data array with live Prisma database transactions.
 
 ### `sessions.ts`
+
 The mock types have been removed, and the route handlers now interact directly with `db.session`.
 
 ```diff title="packages/server/src/routes/sessions.ts"
@@ -195,7 +203,7 @@ The mock types have been removed, and the route handlers now interact directly w
 -let nextId = 1;
 +import { db } from "@exdcode/database";
 +import { Role, Mode, MessageStatus } from "@exdcode/database/enums";
- 
+
  const createSessionSchema = z.object({
    title: z.string(),
    cwd: z.string().optional(),
@@ -210,7 +218,7 @@ The mock types have been removed, and the route handlers now interact directly w
          .string()
          .refine((id) => !!findSupportedChatModel(id), "Unsupported model"),
 @@ -53,14 +29,17 @@
- 
+
  const app = new Hono()
 -  .get("/", (c) => {
 -    const result = sessions.map(({ id, title, createdAt }) => ({
@@ -241,11 +249,11 @@ The mock types have been removed, and the route handlers now interact directly w
 +        messages: { orderBy: { createdAt: "asc" } },
 +      },
 +    });
- 
+
      if (!session) {
        return c.json({ error: "Session not found" }, 404);
      }
- 
+
 -    return c.json(session);
 +    return c.json(session);
    })
@@ -302,13 +310,17 @@ The mock types have been removed, and the route handlers now interact directly w
 ```
 
 ### `new-session.tsx`
+
 The CLI was updated to interact with the new database-backed server API.
 
 ```diff title="packages/cli/src/screens/new-session.tsx"
+
 ```
 
 ### `session.tsx`
+
 The session loading screen now correctly polls and fetches from the Postgres-backed API.
 
 ```diff title="packages/cli/src/screens/session.tsx"
+
 ```

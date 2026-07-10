@@ -25,3 +25,13 @@ Server, Shared Package & Database
     - adding session route
     - integrate api to cli
     - adding database
+
+Sentry Monitoring
+    - Code integration
+
+Ai chat streaming
+    - Ai Chat streaming
+    - server side streaming
+    - use chat hook
+    - integrating chat hook
+    - interruption

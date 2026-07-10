@@ -1,0 +1,199 @@
+---
+title: AI Chat Streaming
+description: Server-side streaming architecture and events
+---
+
+<div className="flex flex-col gap-6 font-sans w-full overflow-x-auto pb-4 mt-8">
+  <div className="text-center font-medium text-gray-700 text-lg">
+    SSE streaming, useChat hook & interruption
+  </div>
+
+  <div className="min-w-[800px]">
+    {/* Step 1 Box */}
+    <div className="border-2 border-blue-200 bg-[#f4f7fe] rounded-2xl p-6 relative">
+      <h3 className="text-blue-600 font-bold text-lg mb-12 m-0 mt-0">Step 1: Server-Side Streaming</h3>
+      
+      <div className="flex items-center justify-between mb-4 mt-8">
+        
+        {/* CLI client */}
+        <div className="bg-[#93c5fd] border-2 border-[#60a5fa] text-[#1e3a8a] rounded-xl px-6 py-4 font-semibold z-10 shadow-sm">
+          CLI client
+        </div>
+
+        {/* Arrow 1: CLI to chat/:sessionId */}
+        <div className="flex-1 relative h-10 flex items-center justify-center mx-2 z-0">
+          {/* Top SSE Stream line */}
+          <div className="absolute -top-12 left-6 right-6 h-12">
+            <div className="absolute left-0 top-0 w-1/2 h-full border-l-2 border-t-2 border-dashed border-[#22c55e] rounded-tl-xl">
+               <div className="absolute bottom-0 -left-[6px] w-0 h-0 border-x-[5px] border-x-transparent border-t-[8px] border-t-[#22c55e]"></div>
+            </div>
+            <div className="absolute right-0 top-0 w-1/2 h-full border-r-2 border-t-2 border-dashed border-[#22c55e] rounded-tr-xl"></div>
+            <div className="absolute top-0 left-0 right-0 flex justify-center">
+               <span className="bg-[#f4f7fe] px-2 text-[#22c55e] text-sm font-bold -mt-3">SSE stream</span>
+            </div>
+          </div>
+          
+          {/* POST line */}
+          <div className="w-full flex items-center justify-center relative">
+             <div className="w-full h-[2px] bg-[#60a5fa]"></div>
+             <div className="absolute bg-[#f4f7fe] px-2 text-[#3b82f6] font-bold text-sm tracking-wide">POST</div>
+             <div className="absolute right-0 -mt-[1px] w-3 h-3 border-t-2 border-r-2 border-[#60a5fa] transform rotate-45"></div>
+             <div className="absolute right-1 -mt-[1px] w-3 h-3 border-t-2 border-r-2 border-[#60a5fa] transform rotate-45"></div>
+          </div>
+        </div>
+
+        {/* chat/:sessionId */}
+        <div className="bg-[#d8b4fe] border-2 border-[#a855f7] text-[#581c87] rounded-xl px-6 py-4 font-semibold z-10 shadow-sm whitespace-nowrap">
+          chat/:sessionId
+        </div>
+
+        {/* Arrow 2: chat/:sessionId to Vercel AI SDK */}
+        <div className="w-16 flex items-center justify-center relative mx-2">
+          <div className="w-full h-[2px] bg-[#a855f7]"></div>
+          <div className="absolute right-0 -mt-[1px] w-3 h-3 border-t-2 border-r-2 border-[#a855f7] transform rotate-45"></div>
+        </div>
+
+        {/* Vercel AI SDK block */}
+        <div className="flex flex-col gap-2 z-10 items-center">
+          <div className="bg-[#86efac] border-2 border-[#22c55e] text-[#14532d] rounded-lg w-full px-4 py-2 font-semibold text-center shadow-sm whitespace-nowrap">
+            Vercel AI SDK
+          </div>
+          <div className="flex gap-2 justify-center w-full">
+            <div className="bg-[#a5f3fc] border-2 border-[#06b6d4] text-[#164e63] rounded-lg px-3 py-1 text-sm font-medium flex-1 text-center">Anthropic</div>
+            <div className="bg-[#a5f3fc] border-2 border-[#06b6d4] text-[#164e63] rounded-lg px-3 py-1 text-sm font-medium flex-1 text-center">OpenAI</div>
+          </div>
+        </div>
+
+        {/* Arrow 3: Vercel to DB */}
+        <div className="w-16 flex items-center justify-center relative mx-2">
+          <div className="w-full border-t-2 border-dashed border-[#fb923c]"></div>
+          <div className="absolute right-0 -mt-[1px] w-3 h-3 border-t-2 border-r-2 border-[#fb923c] transform rotate-45"></div>
+          <div className="absolute right-1 -mt-[1px] w-3 h-3 border-t-2 border-r-2 border-[#fb923c] transform rotate-45"></div>
+        </div>
+
+        {/* Persist to DB */}
+        <div className="bg-[#ffedd5] border-2 border-[#fb923c] text-[#9a3412] rounded-xl px-4 py-3 font-semibold z-10 text-center shadow-sm whitespace-nowrap">
+          Persist<br/>to DB
+        </div>
+      </div>
+      
+      {/* Stream Events Box */}
+      <div className="bg-[#fff9eb] border-2 border-orange-200 rounded-xl p-5 mt-8 relative">
+        <h4 className="font-bold text-black mb-4 m-0 text-md">Stream Events (ChatStreamEvent)</h4>
+        <div className="flex flex-wrap gap-3">
+          <span className="bg-[#bbf7d0] border-2 border-[#22c55e] text-[#14532d] rounded-lg px-4 py-1.5 font-semibold text-sm">text-delta</span>
+          <span className="bg-[#e9d5ff] border-2 border-[#a855f7] text-[#581c87] rounded-lg px-4 py-1.5 font-semibold text-sm">reasoning-delta</span>
+          <span className="bg-[#ffedd5] border-2 border-[#fb923c] text-[#c2410c] rounded-lg px-4 py-1.5 font-semibold text-sm">tool-call</span>
+          <span className="bg-[#ffedd5] border-2 border-[#fb923c] text-[#c2410c] rounded-lg px-4 py-1.5 font-semibold text-sm">tool-result</span>
+          <span className="bg-[#bfdbfe] border-2 border-[#3b82f6] text-[#1e3a8a] rounded-lg px-4 py-1.5 font-semibold text-sm">done</span>
+          <span className="bg-[#fecaca] border-2 border-[#ef4444] text-[#991b1b] rounded-lg px-4 py-1.5 font-semibold text-sm">error</span>
+        </div>
+      </div>
+    </div>
+
+    {/* Step 1 (cont) Box */}
+    <div className="border-2 border-purple-200 bg-[#faf5ff] rounded-3xl p-8 relative mt-12 mb-8 w-max">
+      <h3 className="text-purple-700 font-bold text-xl mb-6 m-0 mt-0">Step 1 (cont): useChat Hook</h3>
+      
+      <div className="flex flex-col items-center justify-center w-full">
+        {/* Top useChat Pill */}
+        <div className="bg-[#d8b4fe] border-2 border-[#a855f7] text-[#581c87] rounded-xl px-12 py-3 font-semibold text-lg shadow-sm">
+          useChat(sessionId, initialMsgs)
+        </div>
+
+        {/* Down Arrow */}
+        <div className="h-8 flex flex-col items-center justify-center relative my-2">
+           <div className="w-[2px] h-full bg-[#a855f7]"></div>
+           <div className="absolute bottom-0 w-3 h-3 border-b-2 border-r-2 border-[#a855f7] transform rotate-45"></div>
+           <div className="absolute bottom-1 w-3 h-3 border-b-2 border-r-2 border-[#a855f7] transform rotate-45"></div>
+        </div>
+
+        {/* Returns Box */}
+        <div className="bg-[#fff9eb] border-2 border-orange-200 rounded-2xl p-5 mt-2 w-[450px]">
+          <h4 className="font-bold text-black mb-3 m-0 text-md">Returns</h4>
+          
+          <div className="flex flex-col gap-3">
+            {/* Top row */}
+            <div className="flex justify-between gap-3">
+               <div className="flex-1 bg-[#93c5fd] border-2 border-[#60a5fa] text-[#1e3a8a] rounded-lg py-2 font-semibold text-center text-md shadow-sm">
+                 messages[]
+               </div>
+               <div className="flex-1 bg-[#86efac] border-2 border-[#22c55e] text-[#14532d] rounded-lg py-2 font-semibold text-center text-md shadow-sm">
+                 streaming state
+               </div>
+            </div>
+            
+            {/* Bottom row */}
+            <div className="flex justify-between gap-3">
+               <div className="flex-1 bg-[#d8b4fe] border-2 border-[#a855f7] text-[#581c87] rounded-lg py-2 font-semibold text-center text-md shadow-sm">
+                 submit()
+               </div>
+               <div className="flex-1 bg-[#fecaca] border-2 border-[#ef4444] text-[#991b1b] rounded-lg py-2 font-semibold text-center text-md shadow-sm">
+                 abort()
+               </div>
+               <div className="flex-1 bg-[#ffedd5] border-2 border-[#fb923c] text-[#c2410c] rounded-lg py-2 font-semibold text-center text-md shadow-sm">
+                 interrupt()
+               </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="text-gray-700 mt-6 font-medium text-left w-[450px]">
+          Auto-resumes if last msg is from<br/>user with no complete reply
+        </div>
+      </div>
+    </div>
+    {/* Step 2 Box */}
+    <div className="border-2 border-green-200 bg-[#f0fdf4] rounded-[2.5rem] p-8 relative mb-8 w-max">
+      <h3 className="text-green-700 font-bold text-xl mb-8 m-0 mt-0">Step 2: Stream Interruption</h3>
+      
+      <div className="flex flex-col w-full">
+        {/* Top row */}
+        <div className="flex items-center gap-4 mb-6">
+          {/* Left Pill */}
+          <div className="bg-[#fecaca] border-2 border-[#ef4444] text-[#991b1b] rounded-xl px-6 py-4 font-semibold text-lg shadow-sm">
+            Press Escape
+          </div>
+
+          {/* Diverging Arrows */}
+          <div className="w-16 h-20 relative mx-2">
+            {/* Top Arrow (points up and right) */}
+            <div className="absolute top-[50%] left-0 w-[110%] h-[2px] bg-[#ef4444] origin-left -rotate-[20deg]">
+              <div className="absolute right-0 -mt-[5px] w-3 h-3 border-t-2 border-r-2 border-[#ef4444] transform rotate-45"></div>
+              <div className="absolute right-1 -mt-[5px] w-3 h-3 border-t-2 border-r-2 border-[#ef4444] transform rotate-45"></div>
+            </div>
+            {/* Bottom Arrow (points down and right) */}
+            <div className="absolute top-[50%] left-0 w-[110%] h-[2px] bg-[#ef4444] origin-left rotate-[20deg]">
+              <div className="absolute right-0 -mt-[5px] w-3 h-3 border-t-2 border-r-2 border-[#ef4444] transform rotate-45"></div>
+              <div className="absolute right-1 -mt-[5px] w-3 h-3 border-t-2 border-r-2 border-[#ef4444] transform rotate-45"></div>
+            </div>
+          </div>
+
+          {/* Right Pills */}
+          <div className="flex flex-col gap-4">
+            <div className="bg-[#93c5fd] border-2 border-[#60a5fa] text-[#1e3a8a] rounded-xl px-8 py-3 font-semibold text-lg shadow-sm w-56 text-center">
+              Client: capture
+            </div>
+            <div className="bg-[#d8b4fe] border-2 border-[#a855f7] text-[#581c87] rounded-xl px-8 py-3 font-semibold text-lg shadow-sm w-56 text-center">
+              Server: persist
+            </div>
+          </div>
+        </div>
+
+        {/* Interrupted Message Visual Box */}
+        <div className="bg-[#fff9eb] border-2 border-yellow-300 rounded-3xl p-6 mt-2 w-full max-w-[500px]">
+          <h4 className="font-bold text-black mb-3 m-0 text-lg">Interrupted Message Visual</h4>
+          <div className="flex flex-col gap-2 text-gray-700 font-medium text-[16px]">
+            <div>Dimmed dot + dimmed mode label</div>
+            <div>"interrupted" replaces duration</div>
+            <div>Partial content preserved in UI</div>
+          </div>
+        </div>
+
+        <div className="text-gray-700 mt-8 font-medium text-left w-full text-lg">
+          Reopening session auto-resumes<br/>pending user messages via /resume
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
