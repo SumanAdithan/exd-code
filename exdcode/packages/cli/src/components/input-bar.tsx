@@ -2,6 +2,7 @@ import { useRef, useCallback, useEffect } from "react";
 import type { TextareaRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
 import type { KeyBinding } from "@opentui/core";
+import { useNavigate } from "react-router";
 import { StatusBar } from "./status-bar";
 import { CommandMenu } from "./command-menu";
 import type { Command } from "./command-menu/types";
@@ -28,6 +29,7 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
   const textareaRef = useRef<TextareaRenderable>(null);
   const onSubmitRef = useRef<() => void>(() => {});
   const renderer = useRenderer();
+  const navigate = useNavigate();
   const toast = useToast();
   const dialog = useDialog();
   const { isTopLayer, setResponder } = useKeyboardLayer();
@@ -75,12 +77,13 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
           exit: () => renderer.destroy(),
           toast,
           dialog,
+          navigate,
         });
       } else {
         textarea.insertText(command.value + " ");
       }
     },
-    [renderer, toast, dialog],
+    [renderer, toast, dialog, navigate],
   );
 
   const handleCommandExecute = useCallback(
