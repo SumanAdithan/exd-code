@@ -39,3 +39,6 @@ Ai chat streaming
 Session management & configuration
     - session management
     - prompt configuration
+
+Tool calling
+    - message parts & thinking
