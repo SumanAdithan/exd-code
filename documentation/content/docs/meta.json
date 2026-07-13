@@ -7,6 +7,7 @@
     "server-and-database",
     "sentry-monitoring",
     "ai-chat-streaming",
-    "session-management"
+    "session-management",
+    "tool-calling"
   ]
 }

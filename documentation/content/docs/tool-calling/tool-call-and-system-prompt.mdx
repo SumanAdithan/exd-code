@@ -1,0 +1,864 @@
+---
+title: Tool Call & System Prompt
+description: Dynamic system prompt generation, tool definition execute blocks, and agent workspace operations
+---
+
+To enable AI agents to perform analysis and apply modifications directly in the workspace, we configure a dynamic system prompt based on active modes (Plan vs. Build) and register surgical filesystem tools.
+
+<div className="my-8 p-6 bg-slate-50 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl max-w-xl mx-auto shadow-sm">
+  <h3 className="text-purple-600 dark:text-purple-400 font-bold text-xl mb-8 text-center font-sans">Step 2: Tools & System Prompt</h3>
+  
+  <div className="flex flex-col items-center gap-6">
+    
+    {/* Decision Diamond */}
+    <div className="relative w-20 h-20 flex items-center justify-center">
+      <div className="absolute w-16 h-16 bg-amber-100 dark:bg-amber-950/40 border border-amber-400 dark:border-amber-800 rotate-45"></div>
+      <span className="relative z-10 font-bold text-sm text-amber-850 dark:text-amber-300 font-sans">Mode?</span>
+    </div>
+
+    {/* Split Branches */}
+    <div className="w-full flex justify-between px-24 -mt-2">
+      <div className="flex flex-col items-center">
+        <span className="text-xs text-slate-500 font-semibold mb-1">Plan</span>
+        <span className="text-purple-400 text-xl font-bold leading-none">&#8601;</span>
+      </div>
+      <div className="flex flex-col items-center">
+        <span className="text-xs text-slate-500 font-semibold mb-1">Build</span>
+        <span className="text-blue-400 text-xl font-bold leading-none">&#8600;</span>
+      </div>
+    </div>
+
+    {/* Tool Containers */}
+    <div className="w-full flex justify-between px-4">
+      
+      {/* Left: Plan (Read-Only) */}
+      <div className="flex flex-col items-center gap-2">
+        <div className="w-40 p-4 bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border border-purple-400 dark:border-purple-800 rounded-2xl flex flex-col gap-1 items-center">
+          <span className="font-mono text-xs font-medium">readFile</span>
+          <span className="font-mono text-xs font-medium">listDirectory</span>
+          <span className="font-mono text-xs font-medium">grep</span>
+          <span className="font-mono text-xs font-medium">glob</span>
+        </div>
+        <span className="text-[10px] text-slate-500 font-semibold font-sans">read-only</span>
+      </div>
+
+      {/* Right: Build (Read + Write) */}
+      <div className="flex flex-col items-center gap-2">
+        <div className="w-40 p-4 bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-400 dark:border-blue-800 rounded-2xl flex flex-col gap-1 items-center">
+          <span className="font-mono text-xs font-medium">+ writeFile</span>
+          <span className="font-mono text-xs font-medium">+ editFile</span>
+          <span className="font-mono text-xs font-medium">+ bash</span>
+          <span className="font-mono text-xs text-slate-400/20 select-none">&nbsp;</span>
+        </div>
+        <span className="text-[10px] text-slate-500 font-semibold font-sans">read + write</span>
+      </div>
+
+    </div>
+
+    {/* Divider Line */}
+    <div className="w-full border-t border-slate-200 dark:border-zinc-800 my-2"></div>
+
+    {/* Bottom Config Rows */}
+    <div className="w-full flex justify-between gap-4 px-2">
+      <div className="flex-1 p-3 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-800 rounded-xl text-center text-xs">
+        <div className="font-semibold mb-1">buildSystemPrompt</div>
+        <div className="text-[10px] text-slate-500">mode-specific rules</div>
+      </div>
+      <div className="flex-1 p-3 bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-400 dark:border-amber-800 rounded-xl text-center text-xs">
+        <div className="font-semibold mb-1">stepCountIs(50)</div>
+        <div className="text-[10px] text-slate-500">agentic loop cap</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+### New Components & Providers
+
+#### 1. System Prompt Builder (`system-prompt.ts`)
+
+Builds the base system prompt dynamically, supplying environment details (`cwd`) and restricting write actions when in `PLAN` mode.
+
+```typescript title="packages/server/src/system-prompt.ts"
+import { Mode } from "@exdcode/database/enums";
+
+type SystemPromptParams = {
+  cwd: string | null;
+  mode: Mode;
+};
+
+export function buildSystemPrompt({ cwd, mode }: SystemPromptParams): string {
+  const parts: string[] = [];
+
+  parts.push(
+    `You are an expert software engineer working as a coding assistant inside a terminal application.
+    The application has two modes the user can switch between:
+    - **PLAN** - Read-only analysis and planning. No file modifications.
+    - **BUILD** - Full implementation with read and write tools.
+    `,
+  );
+
+  if (cwd) {
+    parts.push(`\nThe user's project directory is: ${cwd}`);
+  }
+
+  if (mode === "PLAN") {
+    parts.push(`
+        ## Mode: PLAN
+        You are in plan mode. Your job is to analyze, research, and propose solutions - but NOT make changes.
+        - Use your available tools to explore the codebase
+        - Present your analysis and a clear plan of action
+        - Explain trade-offs and ask for Clarification when needed
+        `);
+  } else {
+    parts.push(`
+        ## Mode: BUILD
+        you are in build mode. Your job is to implement changes directly.
+        - Read and understand the relevant code before making changes
+        - Use writeFile to create new files, editFile for targeted modifications
+        - Use bash to run commands (tests, builds, git operations)
+        - After making changes, verify the work when possible
+        `);
+  }
+
+  if (cwd && mode === "PLAN") {
+    parts.push(`
+        ## Tool Usage
+        You have these tools available:
+        - **readFile** - Read a file's contents
+        - **listDirectory** - List entries in a directory
+        - **glob** - Find files matching a pattern (e.g. "**/*.ts")
+        - **grep** - Search file contents with regex
+
+        ### Rules
+        1. **Be decisive.** Use glob/grep to find what's relevant, then read only those files. Don't read every file in the project.
+        2. **Never re-read files you already read** in this conversation
+        3. **Batch your tool calls.** Call multiple tools in parallel when possible (e.g. read 5 files at once, not one at a time).
+        `);
+  }
+
+  if (cwd && mode === "BUILD") {
+    parts.push(`
+    ## Tool Usage
+    You have these tools available:
+    - **readFile** — Read a file's contents
+    - **writeFile** — Create or overwrite a file
+    - **editFile** — Make a targeted string replacement in a file (oldString must be unique)
+    - **listDirectory** — List entries in a directory
+    - **glob** — Find files matching a pattern (e.g. "**/*.ts")
+    - **grep** — Search file contents with regex
+    - **bash** — Run a shell command
+
+    ### Rules
+    1. **Be decisive.** Use glob/grep to find what's relevant, then read only those files. Don't read every file in the project.
+    2. **Never re-read files you already read** in this conversation.
+    3. **Batch your tool calls.** Call multiple tools in parallel when possible (e.g. read 5 files at once, not one at a time).
+    4. **Use editFile for small changes** to existing files. Only use writeFile when creating new files or rewriting most of a file.`);
+  }
+
+  return parts.join("\n");
+}
+```
+
+#### 2. Tools Index (`tools/index.ts`)
+
+Groups and returns active tools conditionally depending on the session's active mode parameter.
+
+```typescript title="packages/server/src/tools/index.ts"
+import type { Mode } from "@exdcode/database/enums";
+import { createReadFileTool } from "./read-file";
+import { createListDirectoryTool } from "./list-directory";
+import { createWriteFileTool } from "./write-file";
+import { createEditFileTool } from "./edit-file";
+import { createGrepTool } from "./grep";
+import { createGlobTool } from "./glob";
+import { createBashTool } from "./bash";
+
+export function createTools(cwd: string, mode: Mode) {
+  const readOnlyTools = {
+    readFile: createReadFileTool(cwd),
+    listDirectory: createListDirectoryTool(cwd),
+    grep: createGrepTool(cwd),
+    glob: createGlobTool(cwd),
+  };
+
+  if (mode === "PLAN") {
+    return readOnlyTools;
+  }
+
+  return {
+    ...readOnlyTools,
+    writeFile: createWriteFileTool(cwd),
+    editFile: createEditFileTool(cwd),
+    bash: createBashTool(cwd),
+  };
+}
+```
+
+#### 3. Read File Tool (`tools/read-file.ts`)
+
+```typescript title="packages/server/src/tools/read-file.ts"
+import { resolve, relative } from "path";
+import { readFile } from "fs/promises";
+import { tool } from "ai";
+import { z } from "zod";
+
+const MAX_FILE_SIZE = 10_000;
+
+export function createReadFileTool(cwd: string) {
+  return tool({
+    description:
+      "Read the contents of a file in the project. Returns the file text, truncated if very large.",
+    inputSchema: z.object({
+      path: z.string().describe("Relative path to the file to read"),
+    }),
+    execute: async ({ path }) => {
+      const resolved = resolve(cwd, path);
+      const rel = relative(cwd, resolved);
+
+      if (
+        rel.startsWith("..") ||
+        (resolve(resolved) !== resolved && rel.startsWith(".."))
+      ) {
+        return { error: "Path is outside the project directory" };
+      }
+
+      // Ensure resolved path is still within cwd
+      if (!resolved.startsWith(cwd)) {
+        return { error: "Path is outside the project directory" };
+      }
+
+      try {
+        const content = await readFile(resolved, "utf-8");
+        if (content.length > MAX_FILE_SIZE) {
+          return {
+            content: content.slice(0, MAX_FILE_SIZE),
+            truncated: true,
+            totalLength: content.length,
+          };
+        }
+        return { content };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { error: `Failed to read file: ${message}` };
+      }
+    },
+  });
+}
+```
+
+#### 4. Write File Tool (`tools/write-file.ts`)
+
+```typescript title="packages/server/src/tools/write-file.ts"
+import { resolve, relative, dirname } from "path";
+import { writeFile, mkdir } from "fs/promises";
+import { tool } from "ai";
+import { z } from "zod";
+
+export function createWriteFileTool(cwd: string) {
+  return tool({
+    description:
+      "Create or overwrite a file in the project. Creates parent directories if they don't exist.",
+    inputSchema: z.object({
+      path: z.string().describe("Relative path to the file to write"),
+      content: z.string().describe("The full content to write to the file"),
+    }),
+    execute: async ({ path, content }) => {
+      const resolved = resolve(cwd, path);
+
+      if (!resolved.startsWith(cwd)) {
+        return { error: "Path is outside the project directory" };
+      }
+
+      try {
+        await mkdir(dirname(resolved), { recursive: true });
+        await writeFile(resolved, content, "utf-8");
+
+        return {
+          success: true as const,
+          path: relative(cwd, resolved),
+          bytesWritten: Buffer.byteLength(content, "utf-8"),
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { error: `Failed to write file: ${message}` };
+      }
+    },
+  });
+}
+```
+
+#### 5. Edit File Tool (`tools/edit-file.ts`)
+
+```typescript title="packages/server/src/tools/edit-file.ts"
+import { resolve, relative } from "path";
+import { readFile, writeFile } from "fs/promises";
+import { tool } from "ai";
+import { z } from "zod";
+
+export function createEditFileTool(cwd: string) {
+  return tool({
+    description:
+      "Make a targeted edit to a file by replacing an exact string match. The oldString must appear exactly once in the file (for safety). Use this for surgical edits instead of rewriting entire files.",
+    inputSchema: z.object({
+      path: z.string().describe("Relative path to the file to edit"),
+      oldString: z
+        .string()
+        .describe(
+          "The exact text to find and replace (must be unique in the file)",
+        ),
+      newString: z.string().describe("The text to replace it with"),
+    }),
+    execute: async ({ path, oldString, newString }) => {
+      const resolved = resolve(cwd, path);
+
+      if (!resolved.startsWith(cwd)) {
+        return { error: "Path is outside the project directory" };
+      }
+
+      try {
+        const content = await readFile(resolved, "utf-8");
+
+        const occurrences = content.split(oldString).length - 1;
+
+        if (occurrences === 0) {
+          return { error: "oldString not found in file" };
+        }
+
+        if (occurrences > 1) {
+          return {
+            error: `oldString is ambiguous — found ${occurrences} matches. Provide more surrounding context to make it unique.`,
+          };
+        }
+
+        const updated = content.replace(oldString, newString);
+
+        await writeFile(resolved, updated, "utf-8");
+
+        return {
+          success: true as const,
+          path: relative(cwd, resolved),
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { error: `Failed to edit file: ${message}` };
+      }
+    },
+  });
+}
+```
+
+#### 6. List Directory Tool (`tools/list-directory.ts`)
+
+```typescript title="packages/server/src/tools/list-directory.ts"
+import { resolve, relative, join } from "path";
+import { readdir, stat } from "fs/promises";
+import { tool } from "ai";
+import { z } from "zod";
+
+export function createListDirectoryTool(cwd: string) {
+  return tool({
+    description:
+      "List files and directories in a project directory. Returns names with type indicators.",
+    inputSchema: z.object({
+      path: z
+        .string()
+        .describe(
+          "Relative path to the directory to list (defaults to project root)",
+        )
+        .default("."),
+    }),
+    execute: async ({ path }) => {
+      const resolved = resolve(cwd, path);
+
+      if (!resolved.startsWith(cwd)) {
+        return { error: "Path is outside the project directory" };
+      }
+
+      try {
+        const entries = await readdir(resolved);
+        const results: { name: string; type: "file" | "directory" }[] = [];
+
+        for (const entry of entries) {
+          // Skip hidden files and common large directories
+          if (entry.startsWith(".") || entry === "node_modules") continue;
+
+          try {
+            const entryPath = join(resolved, entry);
+            const info = await stat(entryPath);
+            results.push({
+              name: entry,
+              type: info.isDirectory() ? "directory" : "file",
+            });
+          } catch {
+            // Skip entries we can't stat
+          }
+        }
+
+        results.sort((a, b) => {
+          if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        });
+
+        return {
+          path: relative(cwd, resolved) || ".",
+          entries: results,
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { error: `Failed to list directory: ${message}` };
+      }
+    },
+  });
+}
+```
+
+#### 7. Glob Tool (`tools/glob.ts`)
+
+```typescript title="packages/server/src/tools/glob.ts"
+import { resolve, relative } from "path";
+import { tool } from "ai";
+import { z } from "zod";
+
+const MAX_RESULTS = 200;
+
+export function createGlobTool(cwd: string) {
+  return tool({
+    description:
+      "Find files matching a glob pattern. Returns file paths relative to the project root. Skips node_modules and hidden directories.",
+    inputSchema: z.object({
+      pattern: z
+        .string()
+        .describe("Glob pattern to match (e.g. '**/*.ts', 'src/**/*.tsx')"),
+      path: z
+        .string()
+        .describe("Relative directory to search in (defaults to project root)")
+        .default("."),
+    }),
+    execute: async ({ pattern, path }) => {
+      const resolved = resolve(cwd, path);
+
+      if (!resolved.startsWith(cwd)) {
+        return { error: "Path is outside the project directory" };
+      }
+
+      try {
+        const glob = new Bun.Glob(pattern);
+        const files: string[] = [];
+        let truncated = false;
+
+        for await (const match of glob.scan({
+          cwd: resolved,
+          dot: false,
+          onlyFiles: true,
+        })) {
+          // Skip node_modules matches
+          if (match.includes("node_modules")) continue;
+
+          if (files.length >= MAX_RESULTS) {
+            truncated = true;
+            break;
+          }
+
+          // Return paths relative to project root
+          const absoluteMatch = resolve(resolved, match);
+          files.push(relative(cwd, absoluteMatch));
+        }
+
+        files.sort();
+
+        return {
+          files,
+          ...(truncated ? { truncated: true } : {}),
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { error: `Failed to execute command: ${message}` };
+      }
+    },
+  });
+}
+```
+
+#### 8. Grep Tool (`tools/grep.ts`)
+
+```typescript title="packages/server/src/tools/grep.ts"
+import { resolve, relative } from "path";
+import { tool } from "ai";
+import { z } from "zod";
+
+const MAX_MATCHES = 50;
+
+export function createGrepTool(cwd: string) {
+  return tool({
+    description:
+      "Search file contents using a regex pattern. Returns matching lines with file paths and line numbers. Skips hidden directories, node_modules, and binary files.",
+    inputSchema: z.object({
+      pattern: z.string().describe("Regex pattern to search for"),
+      path: z
+        .string()
+        .describe("Relative directory to search in (defaults to project root)")
+        .default("."),
+      include: z
+        .string()
+        .describe("Glob pattern to filter files (e.g. '*.ts', '*.tsx')")
+        .optional(),
+    }),
+    execute: async ({ pattern, path, include }) => {
+      const resolved = resolve(cwd, path);
+
+      if (!resolved.startsWith(cwd)) {
+        return { error: "Path is outside the project directory" };
+      }
+
+      try {
+        const args = [
+          "-rn",
+          "--color=never",
+          "--exclude-dir=node_modules",
+          "--exclude-dir=.git",
+          "-E",
+        ];
+
+        if (include) {
+          args.push(`--include=${include}`);
+        }
+
+        args.push(pattern, resolved);
+
+        const proc = Bun.spawn(["grep", ...args], {
+          stdout: "pipe",
+          stderr: "pipe",
+          cwd,
+        });
+
+        const stdout = await new Response(proc.stdout).text();
+        const stderr = await new Response(proc.stderr).text();
+
+        await proc.exited;
+
+        // grep exits with 1 when no matches found — not an error
+        if (proc.exitCode !== 0 && proc.exitCode !== 1) {
+          return { error: `grep failed: ${stderr.trim()}` };
+        }
+
+        if (!stdout.trim()) {
+          return { matches: [], message: "No matches found" };
+        }
+
+        const lines = stdout.trim().split("\n");
+        const matches: { file: string; line: number; content: string }[] = [];
+        let truncated = false;
+
+        for (const line of lines) {
+          if (matches.length >= MAX_MATCHES) {
+            truncated = true;
+            break;
+          }
+
+          // grep output format: /absolute/path:linenum:content
+          const match = line.match(/^(.+?):(\d+):(.*)$/);
+          if (match) {
+            matches.push({
+              file: relative(cwd, match[1]!),
+              line: parseInt(match[2]!, 10),
+              content: match[3]!,
+            });
+          }
+        }
+
+        return {
+          matches,
+          ...(truncated ? { truncated: true, totalMatches: lines.length } : {}),
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { error: `Failed to execute command: ${message}` };
+      }
+    },
+  });
+}
+```
+
+#### 9. Bash Tool (`tools/bash.ts`)
+
+```typescript title="packages/server/src/tools/bash.ts"
+import { tool } from "ai";
+import { z } from "zod";
+
+const MAX_OUTPUT = 20_000;
+const DEFAULT_TIMEOUT = 30_000;
+
+export function createBashTool(cwd: string) {
+  return tool({
+    description:
+      "Execute a shell command in the project directory. Use this for running tests, builds, git operations, package installs, and any other shell commands.",
+    inputSchema: z.object({
+      command: z.string().describe("The shell command to execute"),
+      timeout: z
+        .number()
+        .describe("Timeout in milliseconds (default: 30000)")
+        .default(DEFAULT_TIMEOUT),
+    }),
+    execute: async ({ command, timeout }) => {
+      try {
+        const proc = Bun.spawn(["bash", "-c", command], {
+          cwd,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: { ...process.env, TERM: "dumb" },
+        });
+
+        const timer = setTimeout(() => {
+          proc.kill();
+        }, timeout);
+
+        const [stdout, stderr] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+        ]);
+
+        const exitCode = await proc.exited;
+        clearTimeout(timer);
+
+        const truncate = (s: string) =>
+          s.length > MAX_OUTPUT
+            ? s.slice(0, MAX_OUTPUT) +
+              `\n... (truncated, ${s.length} total chars)`
+            : s;
+
+        return {
+          stdout: truncate(stdout),
+          stderr: truncate(stderr),
+          exitCode,
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { error: `Failed to execute command: ${message}` };
+      }
+    },
+  });
+}
+```
+
+---
+
+### Git Differences
+
+The following git differences detail changes made to packages, routing, and screens to support dynamic prompts, workspace tool execution contexts, and screen layouts:
+
+```diff title="packages/server/src/routes/chat.ts"
+ import { zValidator } from "@hono/zod-validator";
+ import { z } from "zod";
+-import { streamText as aiStreamText } from "ai";
++import { streamText as aiStreamText, stepCountIs } from "ai";
+ import { db } from "@exdcode/database/client";
+ import { Mode, MessageStatus } from "@exdcode/database/enums";
+@@ -13,6 +13,8 @@ import {
+   messagePartsSchema,
+ } from "@exdcode/shared";
+ import { isSupportedChatModel, resolveChatModel } from "../lib/models";
++import { createTools } from "../tools";
++import { buildSystemPrompt } from "../system-prompt";
+ 
+@@ -67,6 +69,7 @@ function getResumableUserMessage(
+ type StreamParams = {
+   sessionId: string;
+   model: string;
++  cwd: string | null;
+   history: { role: "user" | "assistant"; content: string }[];
+   mode: Mode;
+   abortController: AbortController;
+@@ -76,8 +79,9 @@ async function streamAIResponse(
+   stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
+   params: StreamParams,
+ ) {
+-  const { sessionId, model, history, mode, abortController } = params;
++  const { sessionId, model, cwd, history, mode, abortController } = params;
+   const startTime = Date.now();
++  const tools = cwd ? createTools(cwd, mode) : undefined;
+   const parts: MessagePart[] = [];
+   const resolvedModel = resolveChatModel(model);
+ 
+@@ -112,7 +116,10 @@ async function streamAIResponse(
+   try {
+     const result = aiStreamText({
+       model: resolvedModel.model,
++      instructions: buildSystemPrompt({ cwd, mode }),
+       messages: history,
++      tools,
++      stopWhen: tools ? stepCountIs(50) : undefined,
+       abortSignal: abortController.signal,
+       providerOptions: resolvedModel.providerOptions,
+     });
+@@ -317,6 +325,7 @@ const app = new Hono()
+             await streamAIResponse(stream, {
+               sessionId,
+               model: resumableMessage.model,
++              cwd: session.cwd,
+               history,
+               mode: resumableMessage.mode,
+               abortController,
+@@ -386,6 +395,7 @@ const app = new Hono()
+         await streamAIResponse(stream, {
+           sessionId,
+           model: data.model,
++          cwd: session.cwd,
+           history,
+           mode: data.mode,
+           abortController,
+```
+
+```diff title="packages/shared/src/models.ts"
+@@ -107,4 +107,5 @@ export function findSupportedChatModel(modelId: string) {
+   return SUPPORTED_CHAT_MODELS.find((model) => model.id === modelId);
+ }
+ 
+-export const DEFAULT_CHAT_MODEL_ID: SupportedChatModelId = "gemini-3.5-flash";
++export const DEFAULT_CHAT_MODEL_ID: SupportedChatModelId =
++  "gemini-3.1-pro-preview";
+```
+
+```diff title="packages/cli/src/components/messages/user-message.tsx"
+ type Props = {
+   message: string;
++  mode: Mode;
+ };
+ 
+-export function UserMessage({ message }: Props) {
++export function UserMessage({ message, mode }: Props) {
+   const { colors } = useTheme();
+ 
+   return (
+     <box width="100%" alignItems="center">
+       <box
+         border={["left"]}
+-        borderColor={colors.primary}
++        borderColor={mode === Mode.PLAN ? colors.planMode : colors.primary}
+         width="100%"
+         customBorderChars={SplitBorderChars}
+       >
+```
+
+```diff title="packages/cli/src/screens/home.tsx"
+ export function Home() {
+   const navigate = useNavigate();
++  const { mode, model } = usePromptConfig();
+ 
+   const handleSubmit = useCallback(
+     (text: string) => {
+-      navigate("/sessions/new", { state: { message: text } });
++      navigate("/sessions/new", { state: { message: text, mode, model } });
+     },
+-    [navigate],
++    [navigate, mode, model],
+   );
+ 
+   return (
+@@ -24,8 +27,18 @@ export function Home() {
+       height="100%"
+     >
+       <Header />
+-      <box width="100%" maxWidth={90} paddingX={2}>
++      <box
++        width="100%"
++        maxWidth={90}
++        paddingX={2}
++        flexDirection="column"
++        gap={1}
++      >
+         <InputBar onSubmit={handleSubmit} />
++        <box flexDirection="row" gap={1} flexShrink={0} marginLeft="auto">
++          <text>tab</text>
++          <text attributes={TextAttributes.DIM}>agents</text>
++        </box>
+       </box>
+     </box>
+   );
+```
+
+```diff title="packages/cli/src/screens/new-session.tsx"
+ const newSessionSchema = z.object({
+   message: z.string(),
++  mode: z.enum(Mode),
++  model: z.string(),
+ });
+ 
+ export function NewSession() {
+@@ -43,8 +45,8 @@ export function NewSession() {
+             initialMessage: {
+               role: "USER",
+               content: state.message,
+-              mode: "BUILD",
+-              model: DEFAULT_CHAT_MODEL_ID,
++              mode: state.mode,
++              model: state.model,
+             },
+           },
+         });
+@@ -83,7 +85,7 @@ export function NewSession() {
+ 
+   return (
+     <SessionShell onSubmit={() => {}} inputDisabled loading>
+-      <UserMessage message={state.message} />
++      <UserMessage message={state.message} mode={state.mode} />
+     </SessionShell>
+   );
+ }
+```
+
+```diff title="packages/cli/src/screens/session.tsx"
+ function mapDbMessages(dbMessages: SessionData["messages"]): Message[] {
+@@ -45,13 +47,21 @@ function mapDbMessages(dbMessages: SessionData["messages"]): Message[] {
+       };
+     }
+ 
++    const parsedParts =
++      m.parts === null ? null : messagePartsSchema.safeParse(m.parts);
++    const parts: ClientMessagePart[] = parsedParts?.success
++      ? parsedParts.data.map((p) =>
++          p.type === "tool-call" ? { ...p, status: "done" as const } : p,
++        )
++      : [];
++
+     return {
+       id: m.id,
+       role: "assistant",
+       content: m.content,
+       model: m.model as SupportedChatModelId,
+       mode: m.mode,
+-      parts: [{ type: "text", text: m.content }],
++      parts,
+       ...(m.duration != null ? { duration: prettyMs(m.duration * 1000) } : {}),
+       interrupt: m.status === MessageStatus.INTERRUPTED,
+     };
+@@ -59,7 +69,8 @@ function mapDbMessages(dbMessages: SessionData["messages"]): Message[] {
+ }
+ 
+ function ChatMessage({ msg }: { msg: Message }) {
+-  if (msg.role === "user") return <UserMessage message={msg.content} />;
++  if (msg.role === "user")
++    return <UserMessage message={msg.content} mode={msg.mode} />;
+   if (msg.role === "error") return <ErrorMessage message={msg.content} />;
+ 
+   return (
+@@ -76,6 +87,7 @@ function ChatMessage({ msg }: { msg: Message }) {
+ 
+ function SessionChat({ session }: { session: SessionData }) {
+   const [initialMessages] = useState(() => mapDbMessages(session.messages));
++  const { mode, model } = usePromptConfig();
+   const { isTopLayer } = useKeyboardLayer();
+   const { messages, streaming, submit, abort, interrupt } = useChat(
+     session.id,
+@@ -100,9 +112,7 @@ function SessionChat({ session }: { session: SessionData }) {
+ 
+   return (
+     <SessionShell
+-      onSubmit={(text) =>
+-        submit({ userText: text, mode: "BUILD", model: DEFAULT_CHAT_MODEL_ID })
+-      }
++      onSubmit={(text) => submit({ userText: text, mode, model })}
+       loading={streaming.status === "streaming"}
+       interruptible={streaming.status === "streaming"}
+     >
+```
