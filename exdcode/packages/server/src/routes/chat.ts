@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { streamText as aiStreamText } from "ai";
+import { streamText as aiStreamText, stepCountIs } from "ai";
 import { db } from "@exdcode/database/client";
 import { Mode, MessageStatus } from "@exdcode/database/enums";
 import type { Prisma } from "@exdcode/database";
@@ -13,6 +13,8 @@ import {
   messagePartsSchema,
 } from "@exdcode/shared";
 import { isSupportedChatModel, resolveChatModel } from "../lib/models";
+import { createTools } from "../tools";
+import { buildSystemPrompt } from "../system-prompt";
 
 const submitSchema = z.object({
   content: z.string(),
@@ -67,6 +69,7 @@ function getResumableUserMessage(
 type StreamParams = {
   sessionId: string;
   model: string;
+  cwd: string | null;
   history: { role: "user" | "assistant"; content: string }[];
   mode: Mode;
   abortController: AbortController;
@@ -76,8 +79,9 @@ async function streamAIResponse(
   stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
   params: StreamParams,
 ) {
-  const { sessionId, model, history, mode, abortController } = params;
+  const { sessionId, model, cwd, history, mode, abortController } = params;
   const startTime = Date.now();
+  const tools = cwd ? createTools(cwd, mode) : undefined;
   const parts: MessagePart[] = [];
   const resolvedModel = resolveChatModel(model);
 
@@ -112,7 +116,10 @@ async function streamAIResponse(
   try {
     const result = aiStreamText({
       model: resolvedModel.model,
+      instructions: buildSystemPrompt({ cwd, mode }),
       messages: history,
+      tools,
+      stopWhen: tools ? stepCountIs(50) : undefined,
       abortSignal: abortController.signal,
       providerOptions: resolvedModel.providerOptions,
     });
@@ -132,6 +139,7 @@ async function streamAIResponse(
           type: "reasoning-delta",
           text: part.text,
         };
+
         await stream.writeSSE({
           event: "reasoning-delta",
           data: JSON.stringify(event),
@@ -317,6 +325,7 @@ const app = new Hono()
             await streamAIResponse(stream, {
               sessionId,
               model: resumableMessage.model,
+              cwd: session.cwd,
               history,
               mode: resumableMessage.mode,
               abortController,
@@ -386,6 +395,7 @@ const app = new Hono()
         await streamAIResponse(stream, {
           sessionId,
           model: data.model,
+          cwd: session.cwd,
           history,
           mode: data.mode,
           abortController,

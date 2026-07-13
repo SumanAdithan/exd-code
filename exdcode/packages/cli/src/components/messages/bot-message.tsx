@@ -24,7 +24,7 @@ function formatToolName(name: string): string {
 }
 
 function formatToolArgs(tc: ClientToolCallPart): string {
-  return Object.values(tc.args).map(String).join("");
+  return Object.values(tc.args).map(String).join(" ");
 }
 
 type PartGroup = {
@@ -70,6 +70,11 @@ export function BotMessage({
         <box key={group.key} paddingY={1} width="100%">
           {group.parts.map((part, j) => {
             if (part.type === "reasoning") {
+              const cleanText = part.text
+                .replace(/[\n*]+/g, " ")
+                .replace(/\s+/g, " ")
+                .trim();
+
               return (
                 <box
                   key={`reasoning-${j}`}
@@ -77,13 +82,13 @@ export function BotMessage({
                   borderColor={colors.thinkingBorder}
                   customBorderChars={{
                     ...EmptyBorder,
-                    vertical: "|",
+                    vertical: "│",
                   }}
                   width="100%"
                   paddingX={2}
                 >
                   <text attributes={TextAttributes.DIM}>
-                    <em fg={colors.thinking}>Thinking:</em> {part.text}
+                    <em fg={colors.thinking}>Thinking:</em> {cleanText}
                   </text>
                 </box>
               );
@@ -96,13 +101,13 @@ export function BotMessage({
                   borderColor={colors.thinkingBorder}
                   customBorderChars={{
                     ...EmptyBorder,
-                    vertical: "|",
+                    vertical: "│",
                   }}
                   width="100%"
                   paddingX={2}
                 >
                   <text attributes={TextAttributes.DIM}>
-                    <em fg={colors.info}>{formatToolName(part.name)}</em>
+                    <em fg={colors.info}>{formatToolName(part.name)}:</em>{" "}
                     {formatToolArgs(part)}
                     {part.status === "calling" ? " ..." : ""}
                   </text>
@@ -121,7 +126,7 @@ export function BotMessage({
           })}
         </box>
       ))}
-      <box paddingX={3} paddingY={1} gap={1} width="100%">
+      <box paddingX={3} paddingBottom={1} gap={1} width="100%">
         <box flexDirection="row" gap={2}>
           <text
             attributes={interrupted ? TextAttributes.DIM : 0}
@@ -140,13 +145,13 @@ export function BotMessage({
               {mode === Mode.PLAN ? "Plan" : "Build"}
             </text>
             <text attributes={TextAttributes.DIM} fg={colors.dimSeparator}>
-              &gt;
+              ›
             </text>
             <text attributes={TextAttributes.DIM}>{model}</text>
             {(duration || interrupted) && (
               <>
                 <text attributes={TextAttributes.DIM} fg={colors.dimSeparator}>
-                  &gt;
+                  ›
                 </text>
                 <text attributes={TextAttributes.DIM}>
                   {interrupted ? "interrupted" : duration}

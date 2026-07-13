@@ -107,4 +107,5 @@ export function findSupportedChatModel(modelId: string) {
   return SUPPORTED_CHAT_MODELS.find((model) => model.id === modelId);
 }
 
-export const DEFAULT_CHAT_MODEL_ID: SupportedChatModelId = "gemini-3.5-flash";
+export const DEFAULT_CHAT_MODEL_ID: SupportedChatModelId =
+  "gemini-3.1-pro-preview";

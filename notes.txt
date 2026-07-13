@@ -42,3 +42,4 @@ Session management & configuration
 
 Tool calling
     - message parts & thinking
+    - tool call and system prompt
