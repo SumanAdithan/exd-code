@@ -1,0 +1,593 @@
+---
+title: PKCE Authentication
+description: Secure PKCE OAuth integration, loopback callback servers, and request auth interceptors
+---
+
+To secure user conversations and limit database access to authenticated owners, a PKCE OAuth authentication flow has been integrated. This includes client-side callback listener servers, session file lockers, interceptors on API clients, and middleware route security checks on the backend server.
+
+<div className="my-8 p-6 bg-slate-50 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl max-w-2xl mx-auto shadow-sm">
+  <h3 className="text-purple-600 dark:text-purple-400 font-bold text-xl mb-8 text-center font-sans">Step 2: Clerk Auth</h3>
+  
+  <div className="grid grid-cols-2 gap-8 items-start relative">
+    
+    {/* Left Column: CLI & Server Verification */}
+    <div className="flex flex-col gap-6 items-center">
+      
+      {/* login box -> triggers PKCE */}
+      <div className="w-full flex items-center justify-between">
+        <div className="w-36 py-3 bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-400 dark:border-blue-800 rounded-xl text-center font-semibold text-xs">
+          /login
+        </div>
+        <div className="text-slate-400 text-sm font-bold font-mono">
+          &rarr;
+        </div>
+      </div>
+
+      {/* apiClient with Bearer */}
+      <div className="w-36 p-3 bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-400 dark:border-blue-800 rounded-xl text-center text-xs">
+        <div className="font-semibold mb-0.5">apiClient</div>
+        <div className="text-[10px] text-slate-500">Bearer header</div>
+      </div>
+
+      <span className="text-slate-400 text-lg font-bold leading-none">&darr;</span>
+
+      {/* requireAuth middleware */}
+      <div className="w-40 p-3 bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-400 dark:border-rose-800 rounded-xl text-center text-xs">
+        <div className="font-semibold mb-0.5">requireAuth middleware</div>
+        <div className="text-[10px] text-slate-500">Clerk JWT verify</div>
+      </div>
+
+      {/* Splits outcome: user-scoped vs unauthorized */}
+      <div className="w-full flex justify-between gap-2 mt-1">
+        <div className="flex-1 flex flex-col items-center">
+          <span className="text-emerald-500 text-[10px] font-semibold mb-1">&darr; userId</span>
+          <div className="w-24 py-2 bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-850 rounded-xl text-center text-[10px] font-semibold">
+            User-scoped sessions
+          </div>
+        </div>
+        <div className="flex-1 flex flex-col items-center">
+          <span className="text-rose-500 text-[10px] font-semibold mb-1">&darr; 401</span>
+          <div className="w-24 py-2 bg-rose-50 dark:bg-rose-950/20 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-850 rounded-xl text-center text-[10px] font-semibold">
+            Unauthorized
+          </div>
+        </div>
+      </div>
+
+      {/* Logout triggers clearAuth */}
+      <div className="w-full flex flex-col gap-1 items-start mt-6 border-t border-slate-200 dark:border-zinc-800 pt-4">
+        <div className="w-36 py-2.5 bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-400 dark:border-blue-800 rounded-xl text-center font-semibold text-xs">
+          /logout
+        </div>
+        <span className="text-[9px] text-slate-500 font-sans font-medium">clearAuth() deletes token</span>
+      </div>
+
+    </div>
+
+    {/* Right Column: Browser & Loopback Callback */}
+    <div className="flex flex-col gap-5 items-center">
+      
+      {/* PKCE open browser */}
+      <div className="w-44 p-3 bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border border-purple-400 dark:border-purple-800 rounded-xl text-center text-xs">
+        <div className="font-semibold mb-0.5">PKCE OAuth Flow</div>
+        <div className="text-[10px] text-slate-500">open browser</div>
+      </div>
+
+      <span className="text-purple-400 text-lg font-bold leading-none">&darr;</span>
+
+      {/* local loopback callback server */}
+      <div className="w-44 p-3 bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-400 dark:border-amber-800 rounded-xl text-center text-xs">
+        <div className="font-semibold mb-0.5">Local callback server</div>
+        <div className="text-[10px] text-slate-500">Bun.serve on random port</div>
+      </div>
+
+      <div className="flex flex-col items-center -my-1.5">
+        <span className="text-[10px] text-slate-500 font-semibold font-mono">code</span>
+        <span className="text-amber-400 text-lg font-bold leading-none">&darr;</span>
+      </div>
+
+      {/* Exchange code for access_token */}
+      <div className="w-44 p-3 bg-orange-100 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 border border-orange-400 dark:border-orange-800 rounded-xl text-center text-xs">
+        <div className="font-semibold mb-0.5">Exchange code</div>
+        <div className="text-[10px] text-slate-500">for access_token</div>
+      </div>
+
+      <span className="text-orange-400 text-lg font-bold leading-none">&darr;</span>
+
+      {/* local auth file storage */}
+      <div className="flex flex-col items-center gap-1">
+        <div className="w-44 p-3 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-800 rounded-xl text-center text-xs font-mono">
+          ~/.exdcode/auth.json
+        </div>
+        <span className="text-[9px] text-slate-500 font-sans font-medium">mode 0o600 (owner only)</span>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+### New Components & Providers
+
+#### 1. CLI OAuth Controller (`lib/oauth.ts`)
+
+Launches a loopback web server locally, triggers the browser authorization request with PKCE verifiers, receives the redirect, and exchanges codes for session tokens.
+
+```typescript title="packages/cli/src/lib/oauth.ts"
+import open from "open";
+import { saveAuth } from "./auth";
+
+const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
+
+type OAuthState = {
+  nonce: string;
+  port: number;
+};
+
+function toBase64Url(input: Uint8Array | string) {
+  return Buffer.from(input).toString("base64url");
+}
+
+async function createPkceChallenge(verifier: string) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(verifier),
+  );
+
+  return toBase64Url(new Uint8Array(digest));
+}
+
+function encodeState(state: OAuthState) {
+  return toBase64Url(JSON.stringify(state));
+}
+
+function decodeState(state: string) {
+  const [encoded] = state.split(".");
+  if (!encoded) {
+    throw new Error("Invalid state");
+  }
+
+  return JSON.parse(Buffer.from(encoded, "base64url").toString()) as OAuthState;
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export async function performLogin() {
+  const clerkFrontendApi = process.env.CLERK_FRONTEND_API;
+  const clientId = process.env.CLERK_OAUTH_CLIENT_ID;
+  const apiUrl = process.env.API_URL ?? "http://localhost:3000";
+
+  if (!clerkFrontendApi) throw new Error("CLERK_FRONTEND_API not set");
+  if (!clientId) throw new Error("CLERK_OAUTH_CLIENT_ID not set");
+
+  const nonce = crypto.randomUUID();
+  const codeVerifier = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+  const codeChallenge = await createPkceChallenge(codeVerifier);
+
+  let settled = false;
+
+  return new Promise<{ token: string }>((resolve, reject) => {
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+
+        if (url.pathname !== "/callback") {
+          return new Response("Not found", { status: 404 });
+        }
+
+        const error = url.searchParams.get("error");
+
+        if (error) {
+          const msg = url.searchParams.get("error_description") ?? error;
+          settled = true;
+          reject(new Error(msg));
+          setTimeout(() => server.stop(), 500);
+          return new Response(`Authentication failed: ${msg}`, { status: 400 });
+        }
+
+        const code = url.searchParams.get("code");
+        const state = url.searchParams.get("state");
+
+        if (!code || !state) {
+          settled = true;
+          reject(new Error("Missing code or state"));
+          setTimeout(() => server.stop(), 500);
+          return new Response("Bad request", { status: 400 });
+        }
+
+        // Verify nonce from state
+        try {
+          const payload = decodeState(state);
+
+          if (payload.nonce !== nonce) throw new Error("State mismatch");
+        } catch (err) {
+          settled = true;
+          reject(err);
+          setTimeout(() => server.stop(), 500);
+          return new Response("Invalid state", { status: 400 });
+        }
+
+        try {
+          // Exchange authorization code for Clerk tokens
+          const redirectUri = `${apiUrl}/auth/callback`;
+
+          const tokenRes = await fetch(`${clerkFrontendApi}/oauth/token`, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+              grant_type: "authorization_code",
+              code,
+              redirect_uri: redirectUri,
+              client_id: clientId,
+              code_verifier: codeVerifier,
+            }),
+          });
+
+          if (!tokenRes.ok) {
+            const details = await tokenRes.text();
+            throw new Error(details || "Failed to exchange authorization code");
+          }
+
+          const tokenData = (await tokenRes.json()) as { access_token: string };
+
+          settled = true;
+          saveAuth({ token: tokenData.access_token });
+          resolve({ token: tokenData.access_token });
+          setTimeout(() => server.stop(), 500);
+          return new Response("Authenticated! You can close this tab.");
+        } catch (err) {
+          settled = true;
+          reject(err);
+          const message = getErrorMessage(err);
+          setTimeout(() => server.stop(), 500);
+          return new Response(`Authentication failed: ${message}`, {
+            status: 400,
+          });
+        }
+      },
+    });
+
+    // Build state with port and nonce
+    const port = server.port;
+    if (typeof port !== "number") {
+      server.stop();
+      reject(new Error("Failed to start callback server"));
+      return;
+    }
+
+    const state = encodeState({ port, nonce });
+    const redirectUri = `${apiUrl}/auth/callback`;
+
+    const authorizeUrl = new URL(`${clerkFrontendApi}/oauth/authorize`);
+    authorizeUrl.searchParams.set("response_type", "code");
+    authorizeUrl.searchParams.set("client_id", clientId);
+    authorizeUrl.searchParams.set("redirect_uri", redirectUri);
+    authorizeUrl.searchParams.set("scope", "openid email profile");
+    authorizeUrl.searchParams.set("state", state);
+    authorizeUrl.searchParams.set("prompt", "login");
+    authorizeUrl.searchParams.set("code_challenge", codeChallenge);
+    authorizeUrl.searchParams.set("code_challenge_method", "S256");
+
+    void open(authorizeUrl.toString());
+
+    setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        server.stop();
+        reject(new Error("Login timed out"));
+      }
+    }, LOGIN_TIMEOUT_MS);
+  });
+}
+```
+
+#### 2. Local Token File Locker (`lib/auth.ts`)
+
+Manages storing token credentials securely on the local drive inside restricted home directories.
+
+```typescript title="packages/cli/src/lib/auth.ts"
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  unlinkSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+type AuthData = {
+  token: string;
+};
+
+const AUTH_DIR = join(homedir(), ".exdcode");
+const AUTH_FILE = join(AUTH_DIR, "auth.json");
+
+export function getAuth(): AuthData | null {
+  try {
+    const data = readFileSync(AUTH_FILE, "utf-8");
+    const parsed = JSON.parse(data) as Partial<AuthData>;
+
+    return typeof parsed.token === "string" ? { token: parsed.token } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveAuth(data: AuthData) {
+  if (!existsSync(AUTH_DIR)) {
+    // Owner-only permissions (rwd-----) so other user on the machine can't read tokens
+    mkdirSync(AUTH_DIR, { mode: 0o700 });
+  }
+
+  writeFileSync(AUTH_FILE, JSON.stringify(data), { mode: 0o600 });
+}
+
+export function clearAuth() {
+  try {
+    unlinkSync(AUTH_FILE);
+  } catch {
+    // File doesn't exist
+  }
+}
+```
+
+#### 3. Hono Server Auth Library (`lib/auth.ts`)
+
+```typescript title="packages/server/src/lib/auth.ts"
+import { createClerkClient } from "@clerk/backend";
+
+if (!process.env.CLERK_SECRET_KEY) {
+  throw new Error("CLERK_SECRET_KEY environment variable is required");
+}
+
+if (!process.env.CLERK_PUBLISHABLE_KEY) {
+  throw new Error("CLERK_PUBLISHABLE_KEY environment variable is required");
+}
+
+const clerkClient = createClerkClient({
+  secretKey: process.env.CLERK_SECRET_KEY,
+  publishableKey: process.env.CLERK_PUBLISHABLE_KEY,
+});
+
+export async function authenticateOAuthRequest(request: Request) {
+  const requestState = await clerkClient.authenticateRequest(request, {
+    acceptsToken: "oauth_token",
+  });
+
+  if (!requestState.isAuthenticated) {
+    return null;
+  }
+
+  const auth = requestState.toAuth();
+  if (auth.tokenType !== "oauth_token" || !auth.userId) {
+    return null;
+  }
+
+  return { userId: auth.userId };
+}
+```
+
+#### 4. Authorization Middleware (`middleware/require-auth.ts`)
+
+Defines token checking interceptors for backend Hono paths.
+
+```typescript title="packages/server/src/middleware/require-auth.ts"
+import { createMiddleware } from "hono/factory";
+import { authenticateOAuthRequest } from "../lib/auth";
+
+export type AuthenticatedEnv = {
+  Variables: {
+    userId: string;
+  };
+};
+
+export const requireAuth = createMiddleware<AuthenticatedEnv>(
+  async (c, next) => {
+    try {
+      const auth = await authenticateOAuthRequest(c.req.raw);
+      if (!auth) {
+        return c.json({ error: "Unauthorized. Run /login to continue." }, 401);
+      }
+
+      c.set("userId", auth.userId);
+      await next();
+    } catch {
+      return c.json({ error: "Unauthorized. Run /login to continue." }, 401);
+    }
+  },
+);
+```
+
+#### 5. Server Port Authorization Proxy (`routes/auth.ts`)
+
+Parses incoming OAuth callback states and redirects them back to loopback ports dynamically.
+
+```typescript title="packages/server/src/routes/auth.ts"
+import { Hono } from "hono";
+
+const app = new Hono().get("/callback", (c) => {
+  const code = c.req.query("code");
+  const state = c.req.query("state");
+  const error = c.req.query("error");
+
+  const errorDescription = c.req.query("error_description");
+
+  if (error) {
+    return c.text(errorDescription ?? error, 400);
+  }
+
+  if (!code || !state) {
+    return c.text("Missing authorization code or state", 400);
+  }
+
+  try {
+    const [encoded] = state.split(".");
+    if (!encoded) throw new Error("Invalid state");
+
+    const payload = JSON.parse(Buffer.from(encoded, "base64url").toString());
+    const port = payload.port;
+
+    if (!port || typeof port !== "number") {
+      throw new Error("Invalid port in state");
+    }
+
+    const redirectUrl = `http://localhost:${port}/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
+
+    return c.redirect(redirectUrl);
+  } catch {
+    return c.text("Invalid authentication state", 400);
+  }
+});
+
+export default app;
+```
+
+---
+
+### Git Differences
+
+The following git differences detail the integration changes made to commands, API clients, and server routing to secure session endpoints:
+
+```diff title="packages/cli/src/components/command-menu/commands.tsx"
+ import type { Command } from "./types";
++import { clearAuth } from "../../lib/auth";
++import { performLogin } from "../../lib/oauth";
+ 
+ export const COMMANDS: Command[] = [
+@@ -74,8 +76,16 @@ export const COMMANDS: Command[] = [
+     name: "login",
+     description: "Sign in with your browser",
+     value: "/login",
+-    action: (ctx) => {
++    action: async (ctx) => {
+       ctx.toast.show({ message: "Opening browser to sign in..." });
++      try {
++        await performLogin();
++        ctx.toast.show({ variant: "success", message: "Signed in" });
++      } catch (err) {
++        const message =
++          err instanceof Error ? err.message : "Sign in failed or timed out";
++        ctx.toast.show({ variant: "error", message });
++      }
+     },
+   },
+   {
+@@ -83,6 +93,7 @@ export const COMMANDS: Command[] = [
+     description: "Sign out of your account",
+     value: "/logout",
+     action: (ctx) => {
++      clearAuth();
+       ctx.toast.show({
+         variant: "success",
+         message: "Signed out",
+```
+
+```diff title="packages/cli/src/lib/api-client.ts"
+ import type { AppType } from "@exdcode/server";
++import { clearAuth, getAuth } from "./auth";
+ 
+ export const apiClient = hc<AppType>(
+   process.env.API_URL ?? "http://localhost:5000",
++  {
++    fetch: async (
++      input: Parameters<typeof fetch>[0],
++      init?: Parameters<typeof fetch>[1],
++    ) => {
++      const headers = new Headers(init?.headers);
++      const auth = getAuth();
++
++      if (auth) {
++        headers.set("Authorization", `Bearer ${auth.token}`);
++      }
++
++      const response = await fetch(input, { ...init, headers });
++      if (response.status === 401) {
++        clearAuth();
++      }
++
++      return response;
++    },
++  },
+ );
+```
+
+```diff title="packages/server/src/index.ts"
++import { requireAuth } from "./middleware/require-auth";
+ import sessions from "./routes/sessions";
+ import chat from "./routes/chat";
++import auth from "./routes/auth";
+ 
+ const app = new Hono();
+@@ -51,7 +53,13 @@ app.onError((error, c) => {
+   return c.json({ error: "Internal server error" }, 500);
+ });
+ 
+-const routes = app.route("/sessions", sessions).route("/chat", chat);
++app.use("/sessions/*", requireAuth);
++app.use("/chat/*", requireAuth);
++
++const routes = app
++  .route("/auth", auth)
++  .route("/sessions", sessions)
++  .route("/chat", chat);
+ 
+ export type AppType = typeof routes;
+```
+
+```diff title="packages/server/src/routes/chat.ts"
+ import { isSupportedChatModel, resolveChatModel } from "../lib/models";
+ import { createTools } from "../tools";
+ import { buildSystemPrompt } from "../system-prompt";
++import type { AuthenticatedEnv } from "../middleware/require-auth";
+ 
+@@ -274,12 +275,13 @@ async function streamAIResponse(
+-const app = new Hono()
++const app = new Hono<AuthenticatedEnv>()
+   .post("/:sessionId/resume", async (c) => {
+     const sessionId = c.req.param("sessionId");
++    const userId = c.get("userId");
+ 
+     const session = await db.session.findUnique({
+-      where: { id: sessionId },
++      where: { id: sessionId, userId },
+       include: { messages: { orderBy: { createdAt: "asc" } } },
+     });
+```
+
+```diff title="packages/server/src/routes/sessions.ts"
+ import * as Sentry from "@sentry/hono/bun";
++import type { AuthenticatedEnv } from "../middleware/require-auth";
+ 
+@@ -36,9 +37,12 @@ const createSessionValidator = zValidator(
+-const app = new Hono()
++const app = new Hono<AuthenticatedEnv>()
+   .get("/", async (c) => {
++    const userId = c.get("userId");
++
+     const sessions = await db.session.findMany({
++      where: { userId },
+       orderBy: { createdAt: "desc" },
+```
+
+### Dependency Updates
+
+The following package additions were made to support PKCE social browser logins and backend token verification:
+
+```diff title="packages/cli/package.json"
+     "date-fns": "^4.4.0",
+     "eventsource-parser": "^3.1.0",
+     "hono": "^4.12.27",
++    "open": "^11.0.0",
+     "opentui-spinner": "^0.0.7",
+```
+
+```diff title="packages/server/package.json"
+     "@ai-sdk/google": "^4.0.8",
+     "@ai-sdk/openai": "^4.0.8",
+     "@ai-sdk/provider-utils": "^5.0.7",
++    "@clerk/backend": "^3.11.4",
+     "@exdcode/database": "workspace:*",
+```

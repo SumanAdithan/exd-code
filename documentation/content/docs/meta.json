@@ -8,6 +8,7 @@
     "sentry-monitoring",
     "ai-chat-streaming",
     "session-management",
-    "tool-calling"
+    "tool-calling",
+    "user-experience"
   ]
 }
