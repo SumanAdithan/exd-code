@@ -46,4 +46,4 @@ Tool calling
 
 user experience
     - file tag
-    - PCKE auth
+    - PKCE auth
