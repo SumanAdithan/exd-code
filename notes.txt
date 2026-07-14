@@ -43,3 +43,7 @@ Session management & configuration
 Tool calling
     - message parts & thinking
     - tool call and system prompt
+
+user experience
+    - file tag
+    - PCKE auth
