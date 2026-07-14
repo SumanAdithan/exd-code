@@ -6,8 +6,11 @@ import {
   ThemeDialogContent,
 } from "../dialogs";
 import type { Command } from "./types";
+
 import { clearAuth } from "../../lib/auth";
 import { performLogin } from "../../lib/oauth";
+
+import { openBillingPortal, openUpgradeCheckout } from "../../lib/upgrade";
 
 export const COMMANDS: Command[] = [
   {
@@ -104,16 +107,40 @@ export const COMMANDS: Command[] = [
     name: "upgrade",
     description: "Buy more credits",
     value: "/upgrade",
-    action: (ctx) => {
+    action: async (ctx) => {
       ctx.toast.show({ message: "Opening credits checkout..." });
+
+      try {
+        await openUpgradeCheckout();
+        ctx.toast.show({
+          variant: "success",
+          message: "Checkout opened in browser",
+        });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to open checkout";
+        ctx.toast.show({ variant: "error", message });
+      }
     },
   },
   {
     name: "usage",
     description: "Open billing portal in your browser",
     value: "/usage",
-    action: (ctx) => {
+    action: async (ctx) => {
       ctx.toast.show({ message: "Opening billing portal..." });
+
+      try {
+        await openBillingPortal();
+        ctx.toast.show({
+          variant: "success",
+          message: "Billing portal opened in browser",
+        });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to open billing portal";
+        ctx.toast.show({ variant: "error", message });
+      }
     },
   },
   {

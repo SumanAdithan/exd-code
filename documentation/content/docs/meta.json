@@ -9,6 +9,7 @@
     "ai-chat-streaming",
     "session-management",
     "tool-calling",
-    "user-experience"
+    "user-experience",
+    "billing"
   ]
 }
