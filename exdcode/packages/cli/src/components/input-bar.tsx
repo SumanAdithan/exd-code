@@ -25,7 +25,7 @@ import { useKeyboardLayer } from "../providers/keyboard-layer";
 import { useDialog } from "../providers/dialog";
 import { useTheme } from "../providers/theme";
 import { usePromptConfig } from "../providers/prompt-config";
-import { Mode } from "@exdcode/database/enums";
+import { Mode } from "@exdcode/shared";
 import { readdir } from "node:fs/promises";
 
 const MAX_VISIBLE_MENTIONS = 8;

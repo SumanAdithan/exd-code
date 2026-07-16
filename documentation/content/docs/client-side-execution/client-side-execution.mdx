@@ -1,0 +1,803 @@
+---
+title: Client-Side Tool Execution
+description: Local tool execution loops, Vercel AI SDK React transports, and shared schemas
+---
+
+To protect the host server from arbitrary commands execution and support off-grid local code workspaces operations, the AI execution loop is decoupled: the Hono server maps tool metadata descriptions and returns streaming responses while the CLI client intercepts events to execute tools locally on the user's host machine.
+
+### Decoupled Execution Flow
+
+```
+[CLI Client] ─── User Message ───> [Hono Server]
+     ▲                                   │
+     │                              (AI stream)
+     │                                   │
+     ├─── Local tool call event ◄────────┤
+     │   (e.g., writeFile, grep, bash)
+     │
+     ├─── Runs operations locally
+     │
+     └─── Resubmits tool outputs ──────> [Resume Stream]
+```
+
+---
+
+### New Components & Providers
+
+#### 1. Local Tool Executor (`src/lib/local-tools.ts`)
+
+Parses and validates incoming tool requests, checking execution boundaries against workspace directories, and runs the requested command (such as `readFile`, `writeFile`, or `bash`) directly on the local system.
+
+```typescript title="packages/cli/src/lib/local-tools.ts"
+import { mkdir, readFile, readdir, stat, writeFile } from "fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "path";
+import { toolInputSchemas, Mode, type ModeType } from "@exdcode/shared";
+
+const MAX_FILE_SIZE = 10_000;
+const MAX_RESULTS = 200;
+const MAX_MATCHES = 50;
+const MAX_OUTPUT = 20_000;
+const DEFAULT_TIMEOUT = 30_000;
+
+function resolveInsideCwd(path: string) {
+  const cwd = process.cwd();
+  const resolved = resolve(cwd, path);
+  const rel = relative(cwd, resolved);
+
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error("Path is outside the project directory");
+  }
+
+  return { cwd, resolved };
+}
+
+function truncate(value: string, limit: number) {
+  return value.length > limit
+    ? `${value.slice(0, limit)}\n... (truncated, ${value.length} total chars)`
+    : value;
+}
+
+export async function executeLocalTool(
+  toolName: string,
+  input: unknown,
+  mode: ModeType,
+) {
+  if (
+    mode === Mode.PLAN &&
+    !["readFile", "listDirectory", "glob", "grep"].includes(toolName)
+  ) {
+    throw new Error(`Tool ${toolName} is not available in PLAN mode`);
+  }
+
+  switch (toolName) {
+    case "readFile": {
+      const { path } = toolInputSchemas.readFile.parse(input);
+      const { resolved } = resolveInsideCwd(path);
+      const content = await readFile(resolved, "utf-8");
+      return content.length > MAX_FILE_SIZE
+        ? {
+            content: content.slice(0, MAX_FILE_SIZE),
+            truncated: true,
+            totalLength: content.length,
+          }
+        : { content };
+    }
+    case "listDirectory": {
+      const { path } = toolInputSchemas.listDirectory.parse(input);
+      const { cwd, resolved } = resolveInsideCwd(path);
+      const entries = await readdir(resolved);
+      const results: { name: string; type: "file" | "directory" }[] = [];
+
+      for (const entry of entries) {
+        if (entry.startsWith(".") || entry === "node_modules") continue;
+        const info = await stat(join(resolved, entry));
+        results.push({
+          name: entry,
+          type: info.isDirectory() ? "directory" : "file",
+        });
+      }
+
+      results.sort((a, b) =>
+        a.type !== b.type
+          ? a.type === "directory"
+            ? -1
+            : 1
+          : a.name.localeCompare(b.name),
+      );
+      return { path: relative(cwd, resolved) || ".", entries: results };
+    }
+    case "glob": {
+      const { pattern, path } = toolInputSchemas.glob.parse(input);
+      const { cwd, resolved } = resolveInsideCwd(path);
+      const glob = new Bun.Glob(pattern);
+      const files: string[] = [];
+      let truncated = false;
+
+      for await (const match of glob.scan({
+        cwd: resolved,
+        dot: false,
+        onlyFiles: true,
+      })) {
+        if (match.includes("node_modules")) continue;
+        if (files.length >= MAX_RESULTS) {
+          truncated = true;
+          break;
+        }
+        files.push(relative(cwd, resolve(resolved, match)));
+      }
+
+      files.sort();
+      return { files, ...(truncated ? { truncated: true } : {}) };
+    }
+    case "grep": {
+      const { pattern, path, include } = toolInputSchemas.grep.parse(input);
+      const { cwd, resolved } = resolveInsideCwd(path);
+      const args = [
+        "-rn",
+        "--color=never",
+        "--exclude-dir=node_modules",
+        "--exclude-dir=.git",
+        "-E",
+      ];
+      if (include) args.push(`--include=${include}`);
+      args.push(pattern, resolved);
+
+      const proc = Bun.spawn(["grep", ...args], {
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+      const exitCode = await proc.exited;
+
+      if (exitCode !== 0 && exitCode !== 1)
+        throw new Error(`grep failed: ${stderr.trim()}`);
+      if (!stdout.trim()) return { matches: [], message: "No matches found" };
+
+      const lines = stdout.trim().split("\n");
+      const matches: { file: string; line: number; content: string }[] = [];
+      let truncated = false;
+
+      for (const line of lines) {
+        if (matches.length >= MAX_MATCHES) {
+          truncated = true;
+          break;
+        }
+        const match = line.match(/^(.+?):(\d+):(.*)$/);
+        if (match) {
+          matches.push({
+            file: relative(cwd, match[1]!),
+            line: Number(match[2]),
+            content: match[3]!,
+          });
+        }
+      }
+
+      return {
+        matches,
+        ...(truncated ? { truncated: true, totalMatches: lines.length } : {}),
+      };
+    }
+    case "writeFile": {
+      const { path, content } = toolInputSchemas.writeFile.parse(input);
+      const { cwd, resolved } = resolveInsideCwd(path);
+      await mkdir(dirname(resolved), { recursive: true });
+      await writeFile(resolved, content, "utf-8");
+      return {
+        success: true as const,
+        path: relative(cwd, resolved),
+        bytesWritten: Buffer.byteLength(content, "utf-8"),
+      };
+    }
+    case "editFile": {
+      const { path, oldString, newString } =
+        toolInputSchemas.editFile.parse(input);
+      const { cwd, resolved } = resolveInsideCwd(path);
+      const content = await readFile(resolved, "utf-8");
+      const occurrences = content.split(oldString).length - 1;
+
+      if (occurrences === 0) throw new Error("oldString not found in file");
+      if (occurrences > 1)
+        throw new Error(`oldString is ambiguous; found ${occurrences} matches`);
+
+      await writeFile(resolved, content.replace(oldString, newString), "utf-8");
+      return { success: true as const, path: relative(cwd, resolved) };
+    }
+    case "bash": {
+      const { command, timeout = DEFAULT_TIMEOUT } =
+        toolInputSchemas.bash.parse(input);
+      const proc = Bun.spawn(["bash", "-c", command], {
+        cwd: resolveInsideCwd(".").resolved,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, TERM: "dumb" },
+      });
+      const timer = setTimeout(() => proc.kill(), timeout);
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+      const exitCode = await proc.exited;
+      clearTimeout(timer);
+      return {
+        stdout: truncate(stdout, MAX_OUTPUT),
+        stderr: truncate(stderr, MAX_OUTPUT),
+        exitCode,
+      };
+    }
+    default:
+      throw new Error(`Unknown tool: ${toolName}`);
+  }
+}
+```
+
+#### 2. CLI Environment Wrapper Bin (`bin/exdcode`)
+
+```typescript title="packages/cli/bin/exdcode"
+#!/usr/bin/env bun
+import dotenv from "dotenv";
+import path from "path";
+
+dotenv.config({
+  path: path.resolve(import.meta.dirname, "../../../.env"),
+  quiet: true,
+});
+
+await import("../src/index.tsx");
+```
+
+---
+
+### Git Differences
+
+The following git differences detail the transition from server-side tool execution pipelines to the decoupled client-side agent loops:
+
+```diff title="packages/cli/src/hooks/use-chat.ts"
+-            updateMessages((prev) => [
+-              ...prev,
+-              {
+-                id: event.messageId,
+-                role: "assistant",
+-                content: fullText,
+-                mode: activeStream.mode,
+-                model: activeStream.model,
+-                duration: prettyMs(event.durationMs),
+-                parts: [...parts],
+-              },
+-            ]);
+-            break;
+-          }
+-          case "error": {
+-            updateMessages((prev) => [
+-              ...prev,
+-              {
+-                id: crypto.randomUUID(),
+-                role: "error",
+-                content: event.message,
+-              },
+-            ]);
+-            break;
+-          }
+-        }
+-      }
+-    },
+-    [updateMessages, emitParts, isActiveRequest],
+-  );
+-
+-  const runStream = useCallback(
+-    async ({ mode, model, request }: RunStreamParams) => {
+-      const controller = new AbortController();
+-      const activeStream: ActiveStream = {
+-        requestId: crypto.randomUUID(),
+-        controller,
+-        mode,
+-        model,
+-        parts: [],
+-        interruptCaptured: false,
+-      };
+-
+-      activeStreamRef.current = activeStream;
+-      setStreaming({ status: "streaming", parts: [], mode, model });
+-
+-      try {
+-        const response = await request(controller);
+-        await handleStream(response, activeStream);
+-      } catch (err) {
+-        if (err instanceof DOMException && err.name === "AbortError") {
+-          return;
+-        }
+-
+-        if (!isActiveRequest(activeStream.requestId)) return;
+-        const msg = err instanceof Error ? err.message : String(err);
+-
+-        updateMessages((prev) => [
+-          ...prev,
+-          {
+-            id: crypto.randomUUID(),
+-            role: "error",
+-            content: msg,
++export type Message = UIMessage<ChatMessageMetadata, never, ChatTools>;
++
++export function useChat(sessionId: string, initialMessages: Message[]) {
++  const transport = useMemo(() => {
++    return new DefaultChatTransport<Message>({
++      api: apiClient.chat.$url().toString(),
++      headers() {
++        const auth = getAuth();
++        return auth ? { Authorization: `Bearer ${auth.token}` } : new Headers();
++      },
++      prepareSendMessagesRequest({ messages }) {
++        const message = messages[messages.length - 1];
++        if (!message) throw new Error("No message to send");
++
++        const metadata = messages.findLast(
++          (m) => m.metadata?.mode && m.metadata?.model,
++        )?.metadata;
++        const previousMessage = messages[messages.length - 2];
++        const requestMessages =
++          message.role === "assistant" && previousMessage?.role === "user"
++            ? [previousMessage, message]
++            : [message];
++
++        return {
++          body: {
++            id: sessionId,
++            messages: requestMessages,
++            mode: message.metadata?.mode ?? metadata?.mode,
++            model: message.metadata?.model ?? metadata?.model,
+           },
+-        ]);
+-      } finally {
+-        clearStream(activeStream.requestId);
+-      }
++        };
++      },
++    });
++  }, [sessionId]);
++
++  const chat = useAiChat<Message>({
++    id: sessionId,
++    messages: initialMessages,
++    transport,
++    onToolCall({ toolCall }) {
++      const mode = chat.messages.at(-1)?.metadata?.mode ?? "BUILD";
++
++      void executeLocalTool(toolCall.toolName, toolCall.input, mode)
++        .then((output) =>
++          chat.addToolOutput({
++            tool: toolCall.toolName as keyof ChatTools,
++            toolCallId: toolCall.toolCallId,
++            output,
++          }),
++        )
++        .catch((error) =>
++          chat.addToolOutput({
++            tool: toolCall.toolName as keyof ChatTools,
++            toolCallId: toolCall.toolCallId,
++            state: "output-error",
++            errorText: error instanceof Error ? error.message : String(error),
++          }),
++        );
+     },
+-    [clearStream, handleStream, isActiveRequest, updateMessages],
+-  );
+-
+-  const stopAciveStream = useCallback(
+-    (capturePartial: boolean) => {
+-      const activeStream = activeStreamRef.current;
+-      if (!activeStream) return;
+-
+-      if (capturePartial) {
+-        capturedInterruptedMessage(activeStream);
+-      }
+-
+-      activeStreamRef.current = null;
+-      setStreaming({ status: "idle" });
+-      activeStream.controller.abort();
+-    },
+-    [capturedInterruptedMessage],
+-  );
+-
+-  const resume = useCallback(
+-    async ({ mode, model }: Omit<SubmitParams, "userText">) => {
+-      await runStream({
+-        mode,
+-        model,
+-        request: async (controller) => {
+-          return apiClient.chat[":sessionId"].resume.$post(
+-            { param: { sessionId } },
+-            { init: { signal: controller.signal } },
+-          );
+-        },
+-      });
+-    },
+-    [runStream, sessionId],
+-  );
+-
+-  // Auto-resume when the conversation ends with a user message that has no reply
+-  const hasAutoResumeRef = useRef(false);
+-  useEffect(() => {
+-    if (hasAutoResumeRef.current) return;
+-    const last = initialMessage[initialMessage.length - 1];
+-    if (!last || last.role !== "user") return;
+-
+-    hasAutoResumeRef.current = true;
+-    void resume({ mode: last.mode, model: last.model });
+-  }, [initialMessage, resume]);
+-
+-  const submit = useCallback(
+-    async ({ userText, mode, model }: SubmitParams) => {
+-      // Show the partial answer before sending the next message
+-      stopAciveStream(true);
+-
+-      const userMessage: Message = {
+-        id: crypto.randomUUID(),
+-        role: "user",
+-        content: userText,
+-        mode,
+-        model,
+-      };
+-      updateMessages((prev) => [...prev, userMessage]);
++    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
++  });
+ 
+-      await runStream({
+-        mode,
+-        model,
+-        request: async (controller) => {
+-          return apiClient.chat[":sessionId"].$post(
+-            {
+-              param: { sessionId },
+-              json: { content: userText, mode, model },
+-            },
+-            {
+-              init: { signal: controller.signal },
+-            },
+-          );
++  return {
++    messages: chat.messages,
++    status: chat.status,
++    error: chat.error,
++    submit: (params: {
++      userText: string;
++      mode: ModeType;
++      model: SupportedChatModelId;
++    }) => {
++      return chat.sendMessage({
++        text: params.userText,
++        metadata: {
++          mode: params.mode,
++          model: params.model,
++        },
+       });
+     },
+-    [runStream, sessionId, updateMessages, stopAciveStream],
+-  );
+-
+-  const abort = useCallback(() => {
+-    stopAciveStream(false);
+-  }, [stopAciveStream]);
+-
+-  const interrupt = useCallback(() => {
+-    stopAciveStream(true);
+-  }, [stopAciveStream]);
+-
+-  return { messages, streaming, submit, abort, interrupt };
++    abort: chat.stop,
++    interrupt: chat.stop,
++  };
+ }
+```
+
+```diff title="packages/shared/src/schemas.ts"
++export const Mode = {
++  BUILD: "BUILD",
++  PLAN: "PLAN",
++} as const;
+ 
+-export const messagePartSchema = z.discriminatedUnion("type", [
+-  z.object({
+-    type: z.literal("reasoning"),
+-    text: z.string(),
+-  }),
+-  z.object({
+-    type: z.literal("tool-call"),
+-    id: z.string(),
+-    name: z.string(),
+-    args: toolCallArgsSchema,
+-    result: z.string().optional(),
+-  }),
+-  z.object({
+-    type: z.literal("text"),
+-    text: z.string(),
+-  }),
+-]);
++export const modeSchema = z.enum([Mode.BUILD, Mode.PLAN]);
++
++export type ModeType = (typeof Mode)[keyof typeof Mode];
++
++export const toolInputSchemas = {
++  readFile: z.object({
++    path: z.string().describe("Relative path to the file to read"),
+   }),
+-  z.object({
+-    type: z.literal("text"),
+-    text: z.string(),
++  listDirectory: z.object({
++    path: z.string().default(".").describe("Relative directory path to list"),
+   }),
+-]);
++  glob: z.object({
++    pattern: z.string().describe("Glob pattern to match files"),
++    path: z.string().default(".").describe("Directory to search from"),
+   }),
+-]);
++  grep: z.object({
++    pattern: z.string().describe("Regex pattern to search for"),
++    path: z.string().default(".").describe("Directory to search from"),
++    include: z
++      .string()
++      .optional()
++      .describe("Optional glob for files to include"),
++  }),
++  writeFile: z.object({
++    path: z.string().describe("Relative path to write"),
++    content: z.string().describe("File contents"),
++  }),
++  editFile: z.object({
++    path: z.string().describe("Relative path to edit"),
++    oldString: z.string().describe("Exact text to replace; must be unique"),
++    newString: z.string().describe("Replacement text"),
++  }),
++  bash: z.object({
++    command: z.string().describe("Shell command to run"),
++    description: z
++      .string()
++      .optional()
++      .describe("Short description of the command"),
++    timeout: z.number().optional().describe("Timeout in milliseconds"),
++  }),
++} as const;
+ 
+-export const messagePartsSchema = z.array(messagePartSchema);
+-
+-export type MessagePart = z.infer<typeof messagePartSchema>;
++export const readOnlyToolContracts = {
++  readFile: tool({
++    description: "Read a file from the current project directory.",
++    inputSchema: toolInputSchemas.readFile,
+   }),
+-  z.object({
+-    type: z.literal("tool-call"),
+-    toolCallId: z.string(),
+-    toolName: z.string(),
+-    args: toolCallArgsSchema,
++  listDirectory: tool({
++    description:
++      "List entries in a directory under the current project directory.",
++    inputSchema: toolInputSchemas.listDirectory,
+   }),
+-  z.object({
+-    type: z.literal("tool-result"),
+-    toolCallId: z.string(),
+-    result: z.string(),
++  glob: tool({
++    description:
++      "Find files matching a glob pattern under the current project directory.",
++    inputSchema: toolInputSchemas.glob,
+   }),
+-  z.object({
+-    type: z.literal("done"),
+-    messageId: z.string(),
+-    durationMs: z.number(),
++  grep: tool({
++    description:
++      "Search file contents with a regular expression under the current project directory.",
++    inputSchema: toolInputSchemas.grep,
+   }),
+-  z.object({
+-    type: z.literal("error"),
+-    message: z.string(),
++} as const;
++
++export const buildToolContracts = {
++  ...readOnlyToolContracts,
++  writeFile: tool({
++    description:
++      "Create or overwrite a file under the current project directory.",
++    inputSchema: toolInputSchemas.writeFile,
+   }),
+-]);
++  editFile: tool({
++    description:
++      "Replace exact text in a file under the current project directory.",
++    inputSchema: toolInputSchemas.editFile,
+   }),
+-]);
++  bash: tool({
++    description: "Run a shell command in the current project directory.",
++    inputSchema: toolInputSchemas.bash,
++  }),
++} as const;
++
++export type ToolContracts = typeof buildToolContracts;
++
++export function getToolContracts(mode: ModeType) {
++  return mode === Mode.PLAN ? readOnlyToolContracts : buildToolContracts;
++}
+```
+
+```diff title="packages/server/src/system-prompt.ts"
+-import { Mode } from "@exdcode/database/enums";
++import type { ModeType } from "@exdcode/shared";
+ 
+ type SystemPromptParams = {
+-  cwd: string | null;
+-  mode: Mode;
++  mode: ModeType;
+ };
+ 
+-export function buildSystemPrompt({ cwd, mode }: SystemPromptParams): string {
++export function buildSystemPrompt({ mode }: SystemPromptParams): string {
+   const parts: string[] = [];
+ 
+-  parts.push(
+-    `You are an expert software engineer working as a coding assistant inside a terminal application.
+-    The application has two modes the user can switch between:
+-    - **PLAN** - Read-only analysis and planning. No file modifications.
+-    - **BUILD** - Full implementation with read and write tools.
+-    `,
+-  );
++  parts.push(`You are an expert software engineer working as a coding assistant inside a terminal application.
+ 
+-  if (cwd) {
+-    parts.push(`\nThe user's project directory is: ${cwd}`);
+-  }
++  The application has two modes the user can switch between:
++  - **PLAN** — Read-only analysis and planning. No file modifications.
++  - **BUILD** — Full implementation with read and write tools.`);
+ 
+   if (mode === "PLAN") {
+     parts.push(`
+-        ## Mode: PLAN
+-        You are in plan mode. Your job is to analyze, research, and propose solutions - but NOT make changes.
+-        - Use your available tools to explore the codebase
+-        - Present your analysis and a clear plan of action
+-        - Explain trade-offs and ask for Clarification when needed
+-        `);
++    ## Mode: PLAN
++    You are in planning mode. Your job is to analyze, research, and propose solutions — but NOT make changes.
++    - Use your available tools to explore the codebase
++    - Present your analysis and a clear plan of action
++    - Explain trade-offs and ask for clarification when needed`);
+   } else {
+     parts.push(`
+-        ## Mode: BUILD
+-        you are in build mode. Your job is to implement changes directly.
+-        - Read and understand the relevant code before making changes
+-        - Use writeFile to create new files, editFile for targeted modifications
+-        - Use bash to run commands (tests, builds, git operations)
+-        - After making changes, verify the work when possible
+-        `);
++    ## Mode: BUILD
++    You are in build mode. Your job is to implement changes directly.
++    - Read and understand the relevant code before making changes
++    - Use writeFile to create new files, editFile for targeted modifications
++    - Use bash to run commands (tests, builds, git operations)
++    - After making changes, verify the work when possible`);
+   }
+ 
+-  if (cwd && mode === "PLAN") {
++  if (mode === "PLAN") {
+     parts.push(`
+-        ## Tool Usage
+-        You have these tools available:
+-        - **readFile** - Read a file's contents
+-        - **listDirectory** - List entries in a directory
+-        - **glob** - Find files matching a pattern (e.g. "**/*.ts")
+-        - **grep** - Search file contents with regex
++    ## Tool Usage
++    You have these tools available:
++    - **readFile** — Read a file's contents
++    - **listDirectory** — List entries in a directory
++    - **glob** — Find files matching a pattern (e.g. "**/*.ts")
++    - **grep** — Search file contents with regex
+ 
+-        ### Rules
+-        1. **Be decisive.** Use glob/grep to find what's relevant, then read only those files. Don't read every file in the project.
+-        2. **Never re-read files you already read** in this conversation
+-        3. **Batch your tool calls.** Call multiple tools in parallel when possible (e.g. read 5 files at once, not one at a time).
+-        `);
++    ### Rules
++    1. **Be decisive.** Use glob/grep to find what's relevant, then read only those files. Don't read every file in the project.
++    2. **Never re-read files you already read** in this conversation.
++    3. **Batch your tool calls.** Call multiple tools in parallel when possible (e.g. read 5 files at once, not one at a time).`);
+   }
+ 
+-  if (cwd && mode === "BUILD") {
++  if (mode === "BUILD") {
+     parts.push(`
+     ## Tool Usage
+     You have these tools available:
+@@ -66,7 +56,6 @@ export function buildSystemPrompt({ cwd, mode }: SystemPromptParams): string {
+import type { ModeType } from "@exdcode/shared";
+
+type SystemPromptParams = {
+  mode: ModeType;
+};
+
+export function buildSystemPrompt({ mode }: SystemPromptParams): string {
+  const parts: string[] = [];
+
+  parts.push(`You are an expert software engineer working as a coding assistant inside a terminal application.
+
+  The application has two modes the user can switch between:
+  - **PLAN** — Read-only analysis and planning. No file modifications.
+  - **BUILD** — Full implementation with read and write tools.`);
+
+  if (mode === "PLAN") {
+    parts.push(`
+    ## Mode: PLAN
+    You are in planning mode. Your job is to analyze, research, and propose solutions — but NOT make changes.
+    - Use your available tools to explore the codebase
+    - Present your analysis and a clear plan of action
+    - Explain trade-offs and ask for clarification when needed`);
+  } else {
+    parts.push(`
+    ## Mode: BUILD
+    You are in build mode. Your job is to implement changes directly.
+    - Read and understand the relevant code before making changes
+    - Use writeFile to create new files, editFile for targeted modifications
+    - Use bash to run commands (tests, builds, git operations)
+    - After making changes, verify the work when possible`);
+  }
+
+  if (mode === "PLAN") {
+    parts.push(`
+    ## Tool Usage
+    You have these tools available:
+    - **readFile** — Read a file's contents
+    - **listDirectory** — List entries in a directory
+    - **glob** — Find files matching a pattern (e.g. "**/*.ts")
+    - **grep** — Search file contents with regex
+
+    ### Rules
+    1. **Be decisive.** Use glob/grep to find what's relevant, then read only those files. Don't read every file in the project.
+    2. **Never re-read files you already read** in this conversation.
+    3. **Batch your tool calls.** Call multiple tools in parallel when possible (e.g. read 5 files at once, not one at a time).`);
+  }
+
+  if (mode === "BUILD") {
+    parts.push(`
+    ## Tool Usage
+    You have these tools available:
+    - **readFile** — Read a file's contents
+    - **listDirectory** — List entries in a directory
+    - **writeFile** — Create or overwrite a file
+    - **editFile** — Modify an existing file
+    - **glob** — Find files matching a pattern (e.g. "**/*.ts")
+    - **grep** — Search file contents with regex
+    - **bash** — Run a shell command
+    ### Rules
+    1. **Be decisive.** Use glob/grep to find what's relevant, then read only those files. Don't read every file in the project.
+    2. **Never re-read files you already read** in this conversation.`);
+  }
+
+  return parts.join("\n\n");
+}
+
+/*
+packages/database/prisma/models/session.prisma
+model Session{
+     id String @id @default(cuid())
+     userId String
+     title String
+     createdAt DateTime @default(now())
+     updatedAt DateTime @updatedAt
+     messages Json @default("[]")
+     @@index([userId])
+ }
+*/

@@ -1,10 +1,10 @@
-import { Mode } from "@exdcode/database/enums";
+import { Mode, type ModeType } from "@exdcode/shared";
 import { useTheme } from "../../providers/theme";
 import { SplitBorderChars } from "../border";
 
 type Props = {
   message: string;
-  mode: Mode;
+  mode: ModeType;
 };
 
 export function UserMessage({ message, mode }: Props) {

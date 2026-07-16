@@ -2,24 +2,13 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { db } from "@exdcode/database/client";
-import { Role, Mode, MessageStatus } from "@exdcode/database/enums";
 import * as Sentry from "@sentry/hono/bun";
-import type { AuthenticatedEnv } from "../middleware/require-auth";
 
-import { requireCreditsBalance } from "../middleware/require-credit-balance";
-import { isSupportedChatModel } from "../lib/models";
+import type { AuthenticatedEnv } from "../middleware/require-auth";
+import { requireCreditsBalance } from "../middleware/require-credits-balance";
 
 const createSessionSchema = z.object({
   title: z.string(),
-  cwd: z.string().optional(),
-  initialMessage: z
-    .object({
-      role: z.enum(Role),
-      content: z.string(),
-      mode: z.enum(Mode),
-      model: z.string().refine(isSupportedChatModel, "Unsupported model"),
-    })
-    .optional(),
 });
 
 const createSessionValidator = zValidator(
@@ -69,9 +58,6 @@ const app = new Hono<AuthenticatedEnv>()
 
     const session = await db.session.findUnique({
       where: { id, userId },
-      include: {
-        messages: { orderBy: { createdAt: "asc" } },
-      },
     });
 
     if (!session) {
@@ -85,7 +71,6 @@ const app = new Hono<AuthenticatedEnv>()
 
     Sentry.logger.info("Loaded session", {
       sessionId: id,
-      messageCount: session.messages.length,
     });
 
     return c.json(session);
@@ -98,23 +83,13 @@ const app = new Hono<AuthenticatedEnv>()
     // throw new HTTPException(500, {message: "Mock error: session loading failed"})
 
     const userId = c.get("userId");
-    const { initialMessage, ...data } = c.req.valid("json");
+    const data = c.req.valid("json");
 
     const session = await db.session.create({
       data: {
         ...data,
         userId,
-        ...(initialMessage && {
-          messages: {
-            create: {
-              ...initialMessage,
-              status: MessageStatus.COMPLETE,
-            },
-          },
-        }),
       },
-
-      include: { messages: true },
     });
 
     Sentry.logger.info("Loaded session", {
