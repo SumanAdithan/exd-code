@@ -5,6 +5,104 @@ description: Local tool execution loops, Vercel AI SDK React transports, and sha
 
 To protect the host server from arbitrary commands execution and support off-grid local code workspaces operations, the AI execution loop is decoupled: the Hono server maps tool metadata descriptions and returns streaming responses while the CLI client intercepts events to execute tools locally on the user's host machine.
 
+<div className="my-8 p-6 bg-slate-50 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl max-w-4xl mx-auto shadow-sm">
+  <h3 className="text-slate-800 dark:text-zinc-200 font-bold text-lg mb-6 text-center font-sans">Why are we rewriting chat?</h3>
+  
+  <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+    
+    {/* Left Column: The Problem */}
+    <div className="flex-1 w-full bg-rose-50/30 dark:bg-rose-950/10 border border-rose-200/60 dark:border-rose-900/30 rounded-2xl p-4 flex flex-col gap-4">
+      <h4 className="text-rose-700 dark:text-rose-400 font-bold text-sm text-center">The problem (before)</h4>
+      
+      <div>
+        <div className="bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-300 border border-amber-300/80 dark:border-amber-900/40 rounded-xl p-3 text-center text-xs font-semibold">
+          Custom SSE event schema
+        </div>
+        <div className="text-[10px] text-slate-500 text-center mt-1">
+          reasoning-delta, text-delta, tool-call, tool-result, done...
+        </div>
+      </div>
+
+      <div>
+        <div className="bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-300 border border-amber-300/80 dark:border-amber-900/40 rounded-xl p-3 text-center text-xs font-semibold">
+          Normalized message rows
+        </div>
+        <div className="text-[10px] text-slate-500 text-center mt-1">
+          separate Message table, parts as JSON, role/status enums...
+        </div>
+      </div>
+
+      <div>
+        <div className="bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-300 border border-amber-300/80 dark:border-amber-900/40 rounded-xl p-3 text-center text-xs font-semibold">
+          Hand-rolled stream state
+        </div>
+        <div className="text-[10px] text-slate-500 text-center mt-1">
+          interrupts, resume, partial messages, abort plumbing...
+        </div>
+      </div>
+
+      <div>
+        <div className="bg-rose-100/60 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 border border-rose-300/80 dark:border-rose-900/40 rounded-xl p-3 text-center text-xs font-semibold">
+          Server runs YOUR tools
+        </div>
+        <div className="text-[10px] text-slate-500 text-center mt-1">
+          Execution load runs on backend host
+        </div>
+      </div>
+
+    </div>
+
+    {/* Middle Connector */}
+    <div className="flex flex-row md:flex-col items-center justify-center gap-1 py-4 md:py-0 select-none">
+      <span className="font-bold text-xs text-slate-600 dark:text-zinc-400 italic font-sans">AI SDK</span>
+      <span className="text-xl text-slate-400 font-bold font-mono rotate-90 md:rotate-0">&rarr;</span>
+    </div>
+
+    {/* Right Column: The Result */}
+    <div className="flex-1 w-full bg-emerald-50/30 dark:bg-emerald-950/10 border border-emerald-200/60 dark:border-emerald-900/30 rounded-2xl p-4 flex flex-col gap-4">
+      <h4 className="text-emerald-700 dark:text-emerald-400 font-bold text-sm text-center">The result (after)</h4>
+      
+      <div>
+        <div className="bg-emerald-100/60 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 border border-emerald-300/80 dark:border-emerald-900/40 rounded-xl p-3 text-center text-xs font-semibold">
+          Standard UIMessage stream
+        </div>
+        <div className="text-[10px] text-slate-500 text-center mt-1">
+          AI SDK handles the protocol, useChat handles the client.
+        </div>
+      </div>
+
+      <div>
+        <div className="bg-emerald-100/60 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 border border-emerald-300/80 dark:border-emerald-900/40 rounded-xl p-3 text-center text-xs font-semibold">
+          Messages live on the session
+        </div>
+        <div className="text-[10px] text-slate-500 text-center mt-1">
+          One JSON field. No mapping between db rows and UI parts.
+        </div>
+      </div>
+
+      <div>
+        <div className="bg-emerald-100/60 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 border border-emerald-300/80 dark:border-emerald-900/40 rounded-xl p-3 text-center text-xs font-semibold">
+          Less code to maintain
+        </div>
+        <div className="text-[10px] text-slate-500 text-center mt-1">
+          Resume, interrupt, abort all come free with the SDK.
+        </div>
+      </div>
+
+      <div>
+        <div className="bg-emerald-100/60 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 border border-emerald-300/80 dark:border-emerald-900/40 rounded-xl p-3 text-center text-xs font-semibold">
+          Tools run on YOUR machine
+        </div>
+        <div className="text-[10px] text-slate-500 text-center mt-1">
+          Secure, isolated execution on client workspace CWD
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
 ### Decoupled Execution Flow
 
 ```
