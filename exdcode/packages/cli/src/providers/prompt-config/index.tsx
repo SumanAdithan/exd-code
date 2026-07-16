@@ -3,13 +3,14 @@ import type { ReactNode } from "react";
 import {
   DEFAULT_CHAT_MODEL_ID,
   type SupportedChatModelId,
+  Mode,
+  type ModeType,
 } from "@exdcode/shared";
-import { Mode } from "@exdcode/database/enums";
 
 type PromptConfigContextValue = {
-  mode: Mode;
+  mode: ModeType;
   toggleMode: () => void;
-  setMode: (mode: Mode) => void;
+  setMode: (mode: ModeType) => void;
   model: SupportedChatModelId;
   setModel: (mode: SupportedChatModelId) => void;
 };
@@ -30,7 +31,7 @@ export function usePromptConfig(): PromptConfigContextValue {
 }
 
 export function PromptConfigProvider({ children }: { children: ReactNode }) {
-  const [mode, setMode] = useState<Mode>(Mode.BUILD);
+  const [mode, setMode] = useState<ModeType>(Mode.BUILD);
   const [model, setModel] = useState<SupportedChatModelId>(
     DEFAULT_CHAT_MODEL_ID,
   );

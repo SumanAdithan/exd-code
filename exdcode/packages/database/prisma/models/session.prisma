@@ -2,11 +2,9 @@ model Session{
     id String @id @default(cuid())
     userId String
     title String
-    cwd String?
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
-    messages Message[]
-    
+    messages Json @default("[]")
     @@index([userId])
 }
 

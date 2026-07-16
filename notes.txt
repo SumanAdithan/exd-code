@@ -49,3 +49,5 @@ user experience
     - PKCE auth
 
 billing
+
+client side execution

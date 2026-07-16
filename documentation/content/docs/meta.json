@@ -10,6 +10,7 @@
     "session-management",
     "tool-calling",
     "user-experience",
-    "billing"
+    "billing",
+    "client-side-execution"
   ]
 }

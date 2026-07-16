@@ -3,12 +3,15 @@
   "module": "src/index.tsx",
   "type": "module",
   "private": true,
+  "bin": {
+    "exdcode": "./bin/exdcode"
+  },
   "scripts": {
-    "dev": "bun run --watch src/index.tsx"
+    "dev": "bun run --watch src/index.tsx",
+    "build": "bun build src/index.tsx --outdir dist --target bun --external \"@opentui/core-*\""
   },
   "devDependencies": {
     "@exdcode/server": "workspace:*",
-    "@exdcode/database": "workspace:*",
     "@types/bun": "latest",
     "@types/react": "^19.2.17"
   },
@@ -16,11 +19,12 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@ai-sdk/react": "^4.0.27",
     "@exdcode/shared": "workspace:*",
     "@opentui/core": "^0.4.2",
     "@opentui/react": "^0.4.2",
+    "ai": "^7.0.26",
     "date-fns": "^4.4.0",
-    "eventsource-parser": "^3.1.0",
     "hono": "^4.12.27",
     "open": "^11.0.0",
     "opentui-spinner": "^0.0.7",

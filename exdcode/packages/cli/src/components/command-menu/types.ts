@@ -1,15 +1,14 @@
-import type { SupportedChatModelId } from "@exdcode/shared";
+import type { SupportedChatModelId, ModeType } from "@exdcode/shared";
 import type { DialogContextValue } from "../../providers/dialog";
 import type { ToastContextValue } from "../../providers/toast";
-import type { Mode } from "@exdcode/database/enums";
 
 export type CommandContext = {
   exit: () => void;
   toast: ToastContextValue;
   dialog: DialogContextValue;
   navigate: (path: string) => void;
-  mode: Mode;
-  setMode: (mode: Mode) => void;
+  mode: ModeType;
+  setMode: (mode: ModeType) => void;
   setModel: (model: SupportedChatModelId) => void;
 };
 
